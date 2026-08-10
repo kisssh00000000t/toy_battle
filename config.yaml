@@ -1,0 +1,43 @@
+# TroopWar 游戏配置文件
+# 修改此文件可调整游戏平衡性和行为
+
+game:
+  hand_max: 8
+  troop_per_kind: 3
+  remove_count_per_game: 4
+  init_draw_first: 3
+  init_draw_second: 4
+  star_win_goal: 4
+
+screen:
+  width: 1280
+  height: 800
+  fps: 60
+  hand_card_w: 70
+  hand_card_h: 90
+  node_radius: 22
+
+player_colors:
+  red: [200, 30, 30]
+  blue: [30, 60, 200]
+
+mapgen:
+  difficulties:
+    easy:
+      min_node: 24
+      max_node: 28
+      grid_rows: 5
+      grid_cols: 6
+    normal:
+      min_node: 18
+      max_node: 26
+      grid_rows: 4
+      grid_cols: 5
+    hard:
+      min_node: 14
+      max_node: 20
+      grid_rows: 3
+      grid_cols: 4
+  batch_count: 12
+  medal_goal: 3
+  connectivity_max_retries: 10

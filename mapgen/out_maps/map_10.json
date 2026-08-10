@@ -1,0 +1,320 @@
+{
+  "version": "1.0",
+  "map_id": 1,
+  "difficulty": "normal",
+  "hq_red": 0,
+  "hq_blue": 18,
+  "nodes": [
+    {
+      "nid": 0,
+      "x": 160.0,
+      "y": 425.0,
+      "terrain": "normal",
+      "is_hq": true,
+      "hq_owner": "red",
+      "area_id": 1
+    },
+    {
+      "nid": 1,
+      "x": 303.2,
+      "y": 344.8,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 2
+    },
+    {
+      "nid": 2,
+      "x": 287.5,
+      "y": 561.7,
+      "terrain": "volcanic_jungle",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 2
+    },
+    {
+      "nid": 3,
+      "x": 396.4,
+      "y": 185.2,
+      "terrain": "station_metalx",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 3
+    },
+    {
+      "nid": 4,
+      "x": 433.1,
+      "y": 350.7,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 3
+    },
+    {
+      "nid": 5,
+      "x": 431.1,
+      "y": 489.2,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 3
+    },
+    {
+      "nid": 6,
+      "x": 440.1,
+      "y": 668.0,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 3
+    },
+    {
+      "nid": 7,
+      "x": 572.0,
+      "y": 222.2,
+      "terrain": "castle_field",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 1
+    },
+    {
+      "nid": 8,
+      "x": 546.1,
+      "y": 332.9,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 1
+    },
+    {
+      "nid": 9,
+      "x": 546.9,
+      "y": 470.8,
+      "terrain": "tropical_pool",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 1
+    },
+    {
+      "nid": 10,
+      "x": 536.5,
+      "y": 609.2,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 1
+    },
+    {
+      "nid": 11,
+      "x": 656.1,
+      "y": 201.4,
+      "terrain": "station_metalx",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 2
+    },
+    {
+      "nid": 12,
+      "x": 687.1,
+      "y": 360.9,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 2
+    },
+    {
+      "nid": 13,
+      "x": 698.0,
+      "y": 534.4,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 2
+    },
+    {
+      "nid": 14,
+      "x": 691.1,
+      "y": 617.4,
+      "terrain": "cursed_cemetery",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 2
+    },
+    {
+      "nid": 15,
+      "x": 826.5,
+      "y": 233.1,
+      "terrain": "volcanic_jungle",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 3
+    },
+    {
+      "nid": 16,
+      "x": 814.4,
+      "y": 403.4,
+      "terrain": "station_metalx",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 3
+    },
+    {
+      "nid": 17,
+      "x": 810.3,
+      "y": 646.4,
+      "terrain": "city_of_clouds",
+      "is_hq": false,
+      "hq_owner": "",
+      "area_id": 3
+    },
+    {
+      "nid": 18,
+      "x": 940.0,
+      "y": 425.0,
+      "terrain": "normal",
+      "is_hq": true,
+      "hq_owner": "blue",
+      "area_id": 1
+    }
+  ],
+  "edges": [
+    {
+      "u": 0,
+      "v": 1
+    },
+    {
+      "u": 0,
+      "v": 2
+    },
+    {
+      "u": 1,
+      "v": 3
+    },
+    {
+      "u": 1,
+      "v": 4
+    },
+    {
+      "u": 1,
+      "v": 5
+    },
+    {
+      "u": 2,
+      "v": 5
+    },
+    {
+      "u": 2,
+      "v": 6
+    },
+    {
+      "u": 3,
+      "v": 7
+    },
+    {
+      "u": 4,
+      "v": 5
+    },
+    {
+      "u": 4,
+      "v": 8
+    },
+    {
+      "u": 5,
+      "v": 9
+    },
+    {
+      "u": 6,
+      "v": 10
+    },
+    {
+      "u": 7,
+      "v": 8
+    },
+    {
+      "u": 7,
+      "v": 11
+    },
+    {
+      "u": 7,
+      "v": 12
+    },
+    {
+      "u": 8,
+      "v": 9
+    },
+    {
+      "u": 8,
+      "v": 12
+    },
+    {
+      "u": 9,
+      "v": 13
+    },
+    {
+      "u": 10,
+      "v": 14
+    },
+    {
+      "u": 11,
+      "v": 15
+    },
+    {
+      "u": 12,
+      "v": 16
+    },
+    {
+      "u": 13,
+      "v": 17
+    },
+    {
+      "u": 14,
+      "v": 15
+    },
+    {
+      "u": 14,
+      "v": 17
+    },
+    {
+      "u": 15,
+      "v": 18
+    },
+    {
+      "u": 16,
+      "v": 17
+    },
+    {
+      "u": 16,
+      "v": 18
+    },
+    {
+      "u": 17,
+      "v": 18
+    }
+  ],
+  "star_points": [
+    {
+      "x": 433.1,
+      "y": 350.7,
+      "area_id": 1,
+      "has_star": true
+    },
+    {
+      "x": 826.5,
+      "y": 233.1,
+      "area_id": 2,
+      "has_star": true
+    },
+    {
+      "x": 396.4,
+      "y": 185.2,
+      "area_id": 3,
+      "has_star": true
+    },
+    {
+      "x": 287.5,
+      "y": 561.7,
+      "area_id": 4,
+      "has_star": true
+    }
+  ]
+}

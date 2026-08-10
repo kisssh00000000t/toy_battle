@@ -1,0 +1,208 @@
+{
+  "nodes": [
+    {
+      "nid": 0,
+      "x": 92,
+      "y": 350.0,
+      "terrain": "normal",
+      "is_hq": true,
+      "hq_owner": "red",
+      "area_id": 0
+    },
+    {
+      "nid": 1,
+      "x": 1108.0,
+      "y": 350.0,
+      "terrain": "normal",
+      "is_hq": true,
+      "hq_owner": "blue",
+      "area_id": 0
+    },
+    {
+      "nid": 2,
+      "x": 220.4,
+      "y": 434.4,
+      "terrain": "station_metalx",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 3,
+      "x": 373.8,
+      "y": 441.3,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 4,
+      "x": 491.6,
+      "y": 342.7,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 5,
+      "x": 626.4,
+      "y": 416.3,
+      "terrain": "tropical_pool",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 6,
+      "x": 767.3,
+      "y": 355.2,
+      "terrain": "tropical_pool",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 7,
+      "x": 894.7,
+      "y": 391.7,
+      "terrain": "volcanic_jungle",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 8,
+      "x": 1016.2,
+      "y": 392.5,
+      "terrain": "caribbean_sea",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 9,
+      "x": 637.6,
+      "y": 328.0,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 10,
+      "x": 712.9,
+      "y": 409.0,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 11,
+      "x": 305.7,
+      "y": 397.7,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 12,
+      "x": 414.6,
+      "y": 370.8,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 13,
+      "x": 473.6,
+      "y": 437.0,
+      "terrain": "battlefield",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    }
+  ],
+  "edges": [
+    {
+      "u": 3,
+      "v": 4
+    },
+    {
+      "u": 4,
+      "v": 9
+    },
+    {
+      "u": 7,
+      "v": 10
+    },
+    {
+      "u": 1,
+      "v": 8
+    },
+    {
+      "u": 4,
+      "v": 12
+    },
+    {
+      "u": 5,
+      "v": 13
+    },
+    {
+      "u": 2,
+      "v": 3
+    },
+    {
+      "u": 6,
+      "v": 7
+    },
+    {
+      "u": 4,
+      "v": 5
+    },
+    {
+      "u": 0,
+      "v": 2
+    },
+    {
+      "u": 5,
+      "v": 10
+    },
+    {
+      "u": 5,
+      "v": 6
+    },
+    {
+      "u": 11,
+      "v": 12
+    },
+    {
+      "u": 3,
+      "v": 13
+    },
+    {
+      "u": 6,
+      "v": 9
+    },
+    {
+      "u": 2,
+      "v": 11
+    },
+    {
+      "u": 7,
+      "v": 8
+    }
+  ],
+  "hq_red": 0,
+  "hq_blue": 1,
+  "area_centers": {
+    "0": [
+      581.0571428571428,
+      386.90000000000003
+    ]
+  }
+}

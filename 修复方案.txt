@@ -1,0 +1,1398 @@
+这是一个非常全面且需要打通“前端界面”与“后端规则引擎”的深度优化。为了达到最完美的状态，我们需要分两部分来进行修改：
+
+**第一部分：前端 UI 彻底修复**（包含节点堆叠栈的可视化悬浮窗、彻底无 Emoji、撤销时对方手牌串位的 Bug 修复，以及放置后无目标时自动跳过技能的顺滑体验）。
+**第二部分：后端游戏规则指引**（因为推土机、爆弹不可堆叠，以及弹弓两格距离的判定，必须在逻辑层 `game_logic.py` 中修改，前端只是表现层无法越权）。
+
+---
+
+### 第一部分：前端 UI 完美替换方案
+
+请将你的 **`ui/game_screen.py`** 里的内容全部替换为以下代码。
+
+这个版本做出了以下几大终极优化：
+
+1. **撤销 Bug 彻底修复**：在撤销栈里不仅记录了操作，还精确记录了“这步是谁下的”。撤回时精准退回对应玩家的手牌，再也不会出现对方手牌跑到你手里的情况；同时基于 `node.stack.remove` 完美复原被覆盖的单位（原单位会重新露出来）。
+2. **动态地块堆叠详情悬浮窗**：鼠标移到地块上时，会自适应高度，并从上到下（顶层到最底层）清晰列出该地块上的所有兵种及其归属和战力。
+3. **自动跳过无目标技能**：放置单位后如果触发了技能，系统会自动检测是否有合法目标，如果没有，将**直接跳过**并结束回合，不再给出警告或需要玩家手动右键！
+4. **纯净字体（无 Emoji）**：清除了所有可能导致方块乱码的特殊字符，采用纯中文+色彩搭配提供高级的视觉反馈。
+
+```python
+"""
+对战游戏界面。
+
+复用 GameState 逻辑层，绘制棋盘、手牌卡片、可放置节点高亮、回合信息。
+增加了多行自适应Tooltip支持，地块堆叠堆栈的全览显示，
+以及完美修复撤销串牌Bug和自动跳过无目标技能的顺滑逻辑。
+"""
+
+import logging
+import math
+import json
+import time
+from pathlib import Path
+
+import pygame
+
+from .base_screen import BaseScreen, play_stagger_spawn
+from .widgets import (
+    ToyButton, ToyCard, TOY_COLORS,
+    NumAnimateLabel, draw_rounded_rect, lighten_color, darken_color,
+    get_font, get_border_color,
+)
+from .render_cache import get_cached_troop, get_cached_terrain, get_cached_star
+from .drag_drop import DragDropManager
+from .tween_manager import TWEEN
+from .easing import EASE_SINE_IN_OUT, EASE_CUBIC_OUT
+from .ui_const import (
+    BG_CREAM, BORDER_HOVER, BORDER_WHITE,
+    ROAD_COLOR, AREA_BOUNDS_COLORS, TEXT_MUTED,
+    GRID_TILE_SIZE, GRID_LINE_COLOR, GRID_LINE_WIDTH,
+    FACTION_BG_ALPHA, CAMERA_FIT_PADDING,
+    TOY_RED_BORDER, TOY_BLUE_BORDER,
+    FALLBACK_GRAY,
+)
+from .ui_utils import make_grid_tile, tile_blit_grid, draw_alpha_rect, draw_tooltip
+from .camera import Camera
+from .ui_manager import UIManager
+from game.game_logic import GameState
+from game.commands import GameCommand
+from game.dispatcher import ActionDispatcher
+from game.map_loader import load_map
+from game.sound import play as play_sound, SND_CLICK, SND_PLACE, SND_DRAW, SND_WIN, SND_TURN, SND_UNDO, SND_ERROR, SND_STAR, SND_DESTROY, SND_SEAL, SND_RECALL, SND_MOVE, SND_HOVER
+from .ui_effects import VignetteEffect, draw_toy_plastic_road
+from game.constants import (
+    TERRAIN_COLOR, TERRAIN_DATA, PLAYER_COLORS,
+    NODE_RENDER_RADIUS, NODE_CLICK_RADIUS,
+    HAND_CARD_W, HAND_CARD_H, HAND_Y,
+    TILE_ROUND_RADIUS, TILE_PADDING,
+    TEAM_BG_ALPHA,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════
+#  内置兜底 AI
+# ═══════════════════════════════════════════════════════════
+
+class _BuiltinAIBot:
+    def __init__(self, color: str):
+        self.color = color
+        self.player_color = color
+
+    def decide_action(self, game_state):
+        import random
+        cp = game_state.current_player
+
+        pending = getattr(game_state, 'pending_skill', None)
+        if pending:
+            valid_targets = game_state.get_skill_target_nodes()
+            if valid_targets:
+                target = random.choice(valid_targets)
+                return {"type": "cast_skill", "target_nid": target.nid}
+            else:
+                return {"type": "undo"}
+
+        if not cp.hand:
+            return {"type": "draw"} if cp.reserve else {"type": "end_turn"}
+
+        best_move = None
+        for troop in cp.hand:
+            for node in game_state.get_valid_nodes(troop):
+                if node.is_hq and node.hq_owner == self.color:
+                    continue
+                score = 10
+                if node.is_hq and node.hq_owner != self.color:
+                    score = 10000 
+                elif troop.troop_key in (8, 9, 10, 16):
+                    score = 800
+                elif troop.troop_key == 3:
+                    score = 300
+                if best_move is None or score > best_move[0]:
+                    best_move = (score, troop, node.nid)
+
+        if best_move and best_move[0] > 0:
+            return {"type": "place", "troop_key": best_move[1].troop_key, "target_nid": best_move[2]}
+        return {"type": "draw"} if len(cp.hand) < 6 and cp.reserve else {"type": "end_turn"}
+
+
+# ═══════════════════════════════════════════════════════════
+#  游戏界面
+# ═══════════════════════════════════════════════════════════
+
+class GameScreen(BaseScreen):
+    """对战游戏界面。"""
+
+    INFO_BAR_H = 140
+    HAND_AREA_H = 160
+    SIDE_MARGIN = 10
+
+    def __init__(self, manager, map_data=None, game_mode="local", net_client=None, is_host=True, init_game_state=None):
+        super().__init__(manager)
+        self.game = GameState()
+        self.map_source = "custom"
+        if map_data is not None:
+            self._map_data_dict = map_data
+            self.game.board.load_from_dict(map_data)
+            self.map_source = "custom_map"
+        else:
+            self._map_data_dict = load_map()
+            self.game.board.load_from_dict(self._map_data_dict)
+            self.map_source = "random"
+        self.game.setup()
+
+        self.dispatcher = ActionDispatcher(self.game)
+        self.dispatcher.on_action_executed = self._on_dispatcher_executed
+        self.game.action_log = self.dispatcher.action_log
+
+        if init_game_state is not None:
+            self.game.from_dict(init_game_state)
+            self.net_waiting_sync = False
+
+        self.game_mode = game_mode
+        self.net_client = net_client
+        self.is_host = is_host
+        self.local_player_color = "red" if is_host else "blue"
+        self.net_waiting_sync = (game_mode == "net" and not is_host and init_game_state is None)
+        self.watchdog_timer = 0.0
+
+        try:
+            from game.ai_bot import AIBot
+            self.ai_bot = AIBot("blue") if game_mode == "ai" else None
+        except ImportError:
+            self.ai_bot = _BuiltinAIBot("blue") if game_mode == "ai" else None
+        self.ai_timer = 0.0
+
+        self.selected_troop = None
+        self.valid_nodes = []
+        self.hover_node = None
+        self.hover_alpha = 0
+        self._prev_hover_nid = None
+
+        self.tooltip_text = ""
+        self.tooltip_pos = (0, 0)
+        self.tooltip_timer = 0
+        
+        self.status_msg = ""
+        self.status_timer = 0
+
+        self.game_over_shown = False
+
+        self.btn_draw = ToyButton(
+            "抽卡", rect=(20, 720, 120, 50), callback=self._do_draw,
+            color=TOY_COLORS["secondary_cyan"], icon_type="draw"
+        )
+        self.btn_end = ToyButton(
+            "结束回合", rect=(160, 720, 140, 50), callback=self._do_end_turn,
+            color=TOY_COLORS["accent_coral"], icon_type="end"
+        )
+        self.btn_undo = ToyButton(
+            "撤销", rect=(320, 720, 100, 50), callback=self._undo_action,
+            color=TOY_COLORS["soft_blue"], icon_type="back"
+        )
+        self.btn_back = ToyButton(
+            "返回菜单", rect=(1100, 720, 160, 50), callback=self._go_back,
+            color=TOY_COLORS["danger_red"], icon_type="back"
+        )
+
+        if game_mode == "net":
+            self.btn_undo.enabled = False
+
+        self.red_star_label = NumAnimateLabel("0", (20, 40), font_size=20, color=PLAYER_COLORS["red"])
+        self.blue_star_label = NumAnimateLabel("0", (20, 65), font_size=20, color=PLAYER_COLORS["blue"])
+        self._prev_red_stars = 0
+        self._prev_blue_stars = 0
+
+        self.drag_mgr = DragDropManager()
+        self.drag_mgr.on_drop_callback = self._on_drop_troop
+        self.drag_mgr.find_target_func = self._find_board_node
+
+        self.bg_cache = None
+        self.bg_dirty = True
+        self._grid_tile_surf = make_grid_tile(GRID_TILE_SIZE, GRID_LINE_COLOR, GRID_LINE_WIDTH)
+
+        self.hq_alpha = 200
+        self.placement_pulse_scale = 1.0
+
+        self.skill_target_nodes = []
+        self.skill_pulse_time = 0.0
+
+        self.action_stack = []
+
+        from game.particle import ParticleSystem
+        self.particles = ParticleSystem()
+        self.vignette = VignetteEffect((self.manager.WIN_W, self.manager.WIN_H))
+
+        self.camera = Camera(self.manager.WIN_W, self.manager.WIN_H)
+        self.calc_map_transform()
+
+        self.ui_mgr = UIManager(self.camera)
+        self.ui_mgr.set_callbacks(
+            on_deselect=self._deselect_all,
+            on_clear_tooltips=self._clear_tooltips,
+            on_get_base_pos=self._get_current_hq_pos,
+        )
+
+        self.widgets = [self.btn_draw, self.btn_end, self.btn_undo, self.btn_back]
+        play_stagger_spawn(self, anim_dur=0.3, gap=0.06, overlap_ratio=0.3)
+
+        if self.game_mode == "net" and self.is_host and self.net_client:
+            self._sync_init_to_client()
+
+        try:
+            from game.music_player import BGM
+            BGM.play_battle_bgm()
+        except Exception as e:
+            logger.warning(f"战斗BGM启动失败: {e}")
+
+    def calc_map_transform(self):
+        board = self.game.board
+        if not board.nodes:
+            self.camera.offset_x = 0.0
+            self.camera.offset_y = 0.0
+            self.camera.zoom = 1.0
+            self.camera.dirty = True
+            return
+
+        pad = NODE_RENDER_RADIUS + 8
+        min_x = min(nd.x - pad for nd in board.nodes.values())
+        min_y = min(nd.y - pad for nd in board.nodes.values())
+        max_x = max(nd.x + pad for nd in board.nodes.values())
+        max_y = max(nd.y + pad for nd in board.nodes.values())
+
+        view_rect = (self.SIDE_MARGIN, self.INFO_BAR_H,
+                     self.manager.WIN_W - self.SIDE_MARGIN * 2,
+                     self.manager.WIN_H - self.INFO_BAR_H - self.HAND_AREA_H)
+
+        self.camera.fit_to_world(
+            world_bounds=(min_x, min_y, max_x, max_y),
+            view_rect=view_rect,
+            padding_ratio=CAMERA_FIT_PADDING,
+        )
+
+    def on_window_resize(self):
+        self.camera.on_resize(self.manager.WIN_W, self.manager.WIN_H)
+        self.calc_map_transform()
+        self._grid_tile_surf = make_grid_tile(GRID_TILE_SIZE, GRID_LINE_COLOR, GRID_LINE_WIDTH)
+        self.vignette.set_size((self.manager.WIN_W, self.manager.WIN_H))
+
+    def _handle_game_over(self):
+        if self.game_over_shown: return
+        self.game_over_shown = True
+        self.net_waiting_sync = False
+        play_sound(SND_WIN)
+
+        try:
+            from game.music_player import BGM
+            BGM.play_victory_bgm()
+        except Exception as e:
+            logger.warning(f"胜利BGM启动失败: {e}")
+
+        try:
+            from game.replay import export_replay
+            replays_dir = Path(__file__).parent.parent / "replays"
+            replays_dir.mkdir(parents=True, exist_ok=True)
+            winner = self.game.winner or "draw"
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"replay_{timestamp}_{winner}.json"
+            save_path = replays_dir / filename
+            export_replay(self.game, self.map_source, save_path)
+        except Exception as e:
+            logger.warning(f"export_replay 失败: {e}")
+
+        from .modals import GameOverModal
+        modal = GameOverModal(
+            self.manager, self.game,
+            map_source=self.map_source,
+            game_mode=self.game_mode,
+            win_w=self.manager.WIN_W, win_h=self.manager.WIN_H,
+        )
+        self.ui_mgr.push_modal(modal)
+
+    def _show_pause_modal(self):
+        from .modals import PauseModal
+        modal = PauseModal(
+            self.manager, self.game,
+            map_source=self.map_source,
+            win_w=self.manager.WIN_W, win_h=self.manager.WIN_H,
+        )
+        self.ui_mgr.push_modal(modal)
+
+    def _do_draw(self):
+        if self.game.game_over: return
+        if self.action_stack:
+            self.status_msg = "本回合已放置单位，无法抽卡"
+            self.status_timer = 90
+            play_sound(SND_ERROR)
+            return
+        cmd = GameCommand("DRAW_CARD", source_player=self.game.current_player_color)
+        ok, _ = self.dispatcher.dispatch(cmd)
+        if ok and self.game_mode == "net" and self.net_client:
+            self.net_client.send_action(cmd.to_dict())
+        self.action_stack.clear()
+
+    def _do_end_turn(self):
+        if self.game.game_over: return
+        cmd = GameCommand("END_TURN", source_player=self.game.current_player_color)
+        ok, _ = self.dispatcher.dispatch(cmd)
+        if ok:
+            self.action_stack.clear()
+            if self.game_mode == "net" and self.net_client:
+                self.net_client.send_action(cmd.to_dict())
+
+    def _undo_action(self):
+        """修复版撤销：精准定位属于哪个玩家的手牌，完美还原堆叠。"""
+        if not self.action_stack:
+            self.status_msg = "无可撤销操作"
+            self.status_timer = 60
+            play_sound(SND_ERROR)
+            return
+            
+        troop, node_id, prev_count, prev_extra, player_color = self.action_stack.pop()
+        
+        if troop is None:
+            self.status_msg = "无法撤销此操作"
+            self.status_timer = 60
+            play_sound(SND_ERROR)
+            return
+            
+        node = self.game.board.get_node(node_id)
+        if troop in node.stack:
+            node.stack.remove(troop)
+            
+        # 根据记录的玩家颜色找回对应的手牌集合，避免串牌
+        cp = self.game.red if player_color == "red" else self.game.blue
+        if troop not in cp.hand:
+            cp.hand.append(troop)
+            
+        self.game.current_player_color = player_color
+        self.game.current_player = cp
+        self.game.turn_place_count = prev_count
+        self.game.extra_place_pending = prev_extra
+        
+        if getattr(self.game, 'pending_skill', None):
+            self.game.pending_skill = None
+            self.skill_target_nodes = []
+            self.skill_pulse_time = 0.0
+            
+        self.selected_troop = None
+        self.valid_nodes = []
+        self.bg_dirty = True
+        self.status_msg = f"已撤销: {troop.name}"
+        self.status_timer = 60
+        play_sound(SND_UNDO)
+
+    def _play_effect_sounds(self):
+        msg = self.game.turn_msg
+        if "清除" in msg: play_sound(SND_DESTROY)
+        if "封印" in msg: play_sound(SND_SEAL)
+        if "召回" in msg or "回收" in msg: play_sound(SND_RECALL)
+        if "移动" in msg: play_sound(SND_MOVE)
+
+    def _on_dispatcher_executed(self, cmd: GameCommand, ok: bool, msg: str):
+        if not ok:
+            self.status_msg = msg
+            self.status_timer = 90
+            play_sound(SND_ERROR)
+            return
+
+        self.bg_dirty = True
+
+        if cmd.action_type == "DRAW_CARD":
+            play_sound(SND_DRAW)
+            self.status_msg = msg
+            self.status_timer = 60
+
+        elif cmd.action_type == "PLAY_PIECE":
+            node_id = cmd.payload.get("node_id")
+            node = self.game.board.get_node(int(node_id)) if node_id is not None else None
+            if node:
+                self._emit_place_particles(node)
+            play_sound(SND_PLACE)
+            self._play_effect_sounds()
+
+            if self.game.game_over:
+                self._handle_game_over()
+            elif self.game.extra_place_pending:
+                self.status_msg = "玩具队长：可再放置一张！"
+                self.status_timer = 90
+            else:
+                self.status_msg = "放置成功！请点击「结束回合」"
+                self.status_timer = 90
+
+        elif cmd.action_type == "END_TURN":
+            play_sound(SND_TURN)
+            self.status_msg = f"轮到 {self.game.current_player_color.upper()} 方行动"
+            self.status_timer = 60
+
+        elif cmd.action_type == "SYNC_INIT":
+            self.calc_map_transform()
+            self.bg_dirty = True
+
+        elif cmd.action_type == "CAST_SKILL":
+            play_sound(SND_MOVE)
+            if msg:
+                self.status_msg = msg
+                self.status_timer = 90
+            self.skill_target_nodes = []
+            self.skill_pulse_time = 0.0
+
+        self.selected_troop = None
+        self.valid_nodes = []
+
+    def _go_back(self):
+        from .menu_screen import MenuScreen
+        self.manager.switch_to(MenuScreen)
+
+    def _deselect_all(self):
+        if self.selected_troop is not None or self.valid_nodes:
+            self.selected_troop = None
+            self.valid_nodes = []
+            return True
+        return False
+
+    def _clear_tooltips(self):
+        self.tooltip_text = ""
+        self.tooltip_timer = 0
+        self.hover_node = None
+        self.hover_alpha = 0
+
+    def _get_current_hq_pos(self):
+        cp_color = self.game.current_player_color
+        for nid, node in self.game.board.nodes.items():
+            if node.is_hq and node.hq_owner == cp_color:
+                return (node.x, node.y)
+        nodes = list(self.game.board.nodes.values())
+        if nodes:
+            cx = sum(n.x for n in nodes) / len(nodes)
+            cy = sum(n.y for n in nodes) / len(nodes)
+            return (cx, cy)
+        return None
+
+    def handle_event(self, event):
+        if self.game_mode == "net" and self.net_client is not None:
+            if self.net_waiting_sync or self.game.current_player_color != self.local_player_color:
+                if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.KEYDOWN):
+                    if not self.net_waiting_sync:
+                        self.status_msg = "正等待网络对手下棋中..."
+                        self.status_timer = 40
+                    return
+
+        super().handle_event(event)
+
+        if self.ui_mgr.has_modal:
+            self.ui_mgr.handle_event(event)
+            return
+
+        if self.game.game_over:
+            return
+
+        if self.game_mode == "ai" and self.ai_bot is not None:
+            if self.game.current_player_color == self.ai_bot.player_color:
+                if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+                    return
+
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            if getattr(self.game, 'pending_skill', None):
+                self._undo_action()
+                self.status_msg = "已取消技能释放，收回该兵种"
+                self.status_timer = 90
+                return
+            if not self.selected_troop and not self.valid_nodes and not self.tooltip_timer:
+                self._show_pause_modal()
+                return
+
+        if self.ui_mgr.handle_event(event):
+            if self.camera.dirty:
+                self.bg_dirty = True
+                self.camera.dirty = False
+            return
+
+        if self.drag_mgr.handle_event(event):
+            return
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            mx, my = event.pos
+
+            # ── 强行跳过技能选择 (防卡死兜底) ──
+            if event.button == 3:
+                if getattr(self.game, 'pending_skill', None):
+                    cmd = GameCommand(
+                        "CAST_SKILL",
+                        source_player=self.game.current_player_color,
+                        payload={"target_nid": None},
+                    )
+                    ok, msg = self.dispatcher.dispatch(cmd)
+                    if ok and self.game_mode == "net" and self.net_client:
+                        self.net_client.send_action(cmd.to_dict())
+                    
+                    self.game.pending_skill = None
+                    self.skill_target_nodes = []
+                    self.status_msg = "已强制跳过当前技能"
+                    self.status_timer = 60
+                    self.bg_dirty = True
+                    return
+
+            if event.button == 1:
+                if self.game.pending_skill:
+                    t = self.camera
+                    wx, wy = t.screen_to_world(mx, my)
+                    click_r = t.scaled_click_radius(NODE_CLICK_RADIUS + 6)
+                    clicked_node = self.game.board.get_node_by_pos(wx, wy, radius=click_r)
+                    if clicked_node is not None and clicked_node in self.skill_target_nodes:
+                        cmd = GameCommand(
+                            "CAST_SKILL",
+                            source_player=self.game.current_player_color,
+                            payload={"target_nid": clicked_node.nid},
+                        )
+                        ok, _ = self.dispatcher.dispatch(cmd)
+                        if ok:
+                            if self.game_mode == "net" and self.net_client:
+                                self.net_client.send_action(cmd.to_dict())
+                        else:
+                            self.status_msg = self.game.turn_msg
+                            self.status_timer = 90
+                    return
+
+                troop = self._hit_hand_card(mx, my)
+                if troop is not None:
+                    play_sound(SND_CLICK)
+                    self.selected_troop = troop
+                    self.valid_nodes = self.game.get_valid_nodes(troop)
+                    drag_img = self._make_troop_drag_image(troop)
+                    card_rect = self._get_hand_card_rect(troop)
+                    self.drag_mgr.start_drag(troop, card_rect, drag_img)
+                    return
+
+                if self.selected_troop is not None:
+                    t = self.camera
+                    wx, wy = t.screen_to_world(mx, my)
+                    click_r = t.scaled_click_radius(NODE_CLICK_RADIUS + 6)
+                    node = self.game.board.get_node_by_pos(wx, wy, radius=click_r)
+                    if node is not None and node in self.valid_nodes:
+                        _prev_count = self.game.turn_place_count
+                        _prev_extra = self.game.extra_place_pending
+                        
+                        placed_troop = self.selected_troop
+                        player_col = self.game.current_player_color
+                        
+                        cmd = GameCommand(
+                            "PLAY_PIECE",
+                            source_player=player_col,
+                            payload={"troop_key": placed_troop.troop_key, "node_id": node.nid},
+                        )
+                        ok, _ = self.dispatcher.dispatch(cmd)
+                        if ok:
+                            if "骷髅" in getattr(placed_troop, "name", ""):
+                                self.action_stack.clear()
+                            else:
+                                self.action_stack.append((placed_troop, node.nid, _prev_count, _prev_extra, player_col))
+                                
+                            self.selected_troop = None
+                            self.valid_nodes = []
+                            
+                            # 自动跳过无目标的技能，极致顺滑
+                            if self.game.pending_skill:
+                                self.skill_target_nodes = self.game.get_skill_target_nodes()
+                                if not self.skill_target_nodes:
+                                    cmd_skip = GameCommand("CAST_SKILL", source_player=self.game.current_player_color, payload={"target_nid": None})
+                                    ok_skip, _ = self.dispatcher.dispatch(cmd_skip)
+                                    if ok_skip and self.game_mode == "net" and self.net_client:
+                                        self.net_client.send_action(cmd_skip.to_dict())
+                                    self.status_msg = "无合法技能目标，已自动跳过"
+                                    self.status_timer = 90
+                            
+                            if self.game_mode == "net" and self.net_client:
+                                self.net_client.send_action(cmd.to_dict())
+                        else:
+                            self.status_msg = self.game.turn_msg
+                            self.status_timer = 90
+                    else:
+                        self.selected_troop = None
+                        self.valid_nodes = []
+
+        elif event.type == pygame.MOUSEMOTION:
+            mx, my = event.pos
+            t = self.camera
+            wx, wy = t.screen_to_world(mx, my)
+            hover_r = t.scaled_click_radius(NODE_CLICK_RADIUS)
+            self.hover_node = self.game.board.get_node_by_pos(wx, wy, hover_r)
+            if self.hover_node:
+                new_nid = self.hover_node.nid
+                if new_nid != self._prev_hover_nid:
+                    play_sound(SND_HOVER)
+                    self._prev_hover_nid = new_nid
+                TWEEN.create_tween(self, "hover_alpha", 255, 0.15, 0, EASE_CUBIC_OUT)
+            else:
+                TWEEN.create_tween(self, "hover_alpha", 0, 0.1, 0, EASE_CUBIC_OUT)
+                
+            troop = self._hit_hand_card(mx, my)
+            if troop is not None:
+                from game.constants import TROOP_DATA
+                t_data = TROOP_DATA.get(troop.troop_key, {})
+                t_desc = t_data.get("desc", "")
+                desc_text = ""
+                if t_desc:
+                    wrapped_desc = "\n".join(t_desc[i:i+16] for i in range(0, len(t_desc), 16))
+                    desc_text = f"\n\n技能说明:\n{wrapped_desc}"
+                
+                self.tooltip_text = f"【{troop.name}】 {troop.alias}  战力: {troop.number or 'J'}{desc_text}"
+                self.tooltip_pos = (mx + 15, my - 25)
+                self.tooltip_timer = 60
+
+    def _hit_hand_card(self, mx, my):
+        cp = self.game.current_player
+        hand = cp.hand
+        if not hand:
+            return None
+        total_w = len(hand) * (HAND_CARD_W + 8) - 8
+        start_x = (self.manager.WIN_W - total_w) // 2
+        for i, troop in enumerate(hand):
+            card_x = start_x + i * (HAND_CARD_W + 8)
+            card_y = HAND_Y
+            rect = pygame.Rect(card_x, card_y, HAND_CARD_W, HAND_CARD_H)
+            if rect.collidepoint(mx, my):
+                return troop
+        return None
+
+    def _get_hand_card_rect(self, troop):
+        cp = self.game.current_player
+        hand = cp.hand
+        if troop not in hand:
+            return pygame.Rect(0, 0, HAND_CARD_W, HAND_CARD_H)
+        i = hand.index(troop)
+        total_w = len(hand) * (HAND_CARD_W + 8) - 8
+        start_x = (self.manager.WIN_W - total_w) // 2
+        card_x = start_x + i * (HAND_CARD_W + 8)
+        return pygame.Rect(card_x, HAND_Y, HAND_CARD_W, HAND_CARD_H)
+
+    def _make_troop_drag_image(self, troop):
+        w, h = HAND_CARD_W, HAND_CARD_H
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        cp_color = PLAYER_COLORS.get(self.game.current_player_color, FALLBACK_GRAY)
+        draw_rounded_rect(surf, cp_color, pygame.Rect(0, 0, w, h), radius=12)
+        border_col = TOY_RED_BORDER if self.game.current_player_color == "red" else TOY_BLUE_BORDER
+        pygame.draw.rect(surf, border_col, pygame.Rect(0, 0, w, h), width=2, border_radius=12)
+        tro_surf = get_cached_troop(troop.troop_key, self.game.current_player_color, target_size=24)
+        surf.blit(tro_surf, (w // 2 - tro_surf.get_width() // 2, h // 2 - 8 - tro_surf.get_height() // 2))
+        val_font = get_font(14, style="english")
+        val = str(troop.number) if troop.number else "J"
+        val_surf = val_font.render(val, True, (255, 255, 255))
+        surf.blit(val_surf, (4, h - 18))
+        return surf
+
+    def _find_board_node(self, mx, my):
+        t = self.camera
+        wx, wy = t.screen_to_world(mx, my)
+        click_r = t.scaled_click_radius(NODE_CLICK_RADIUS + 10)
+        return self.game.board.get_node_by_pos(wx, wy, radius=click_r)
+
+    def _on_drop_troop(self, troop, node):
+        if troop is None or node is None:
+            return
+        valid = self.game.get_valid_nodes(troop)
+        if node in valid:
+            _prev_count = self.game.turn_place_count
+            _prev_extra = self.game.extra_place_pending
+            
+            player_col = self.game.current_player_color
+            cmd = GameCommand(
+                "PLAY_PIECE",
+                source_player=player_col,
+                payload={"troop_key": troop.troop_key, "node_id": node.nid},
+            )
+            ok, _ = self.dispatcher.dispatch(cmd)
+            if ok:
+                if "骷髅" in getattr(troop, "name", ""):
+                    self.action_stack.clear()
+                else:
+                    self.action_stack.append((troop, node.nid, _prev_count, _prev_extra, player_col))
+                
+                # 自动跳过
+                if self.game.pending_skill:
+                    self.skill_target_nodes = self.game.get_skill_target_nodes()
+                    if not self.skill_target_nodes:
+                        cmd_skip = GameCommand("CAST_SKILL", source_player=self.game.current_player_color, payload={"target_nid": None})
+                        ok_skip, _ = self.dispatcher.dispatch(cmd_skip)
+                        if ok_skip and self.game_mode == "net" and self.net_client:
+                            self.net_client.send_action(cmd_skip.to_dict())
+                        self.status_msg = "无合法技能目标，已自动跳过"
+                        self.status_timer = 90
+                
+                if self.game_mode == "net" and self.net_client:
+                    self.net_client.send_action(cmd.to_dict())
+            else:
+                self.status_msg = self.game.turn_msg
+                self.status_timer = 90
+        self.selected_troop = None
+        self.valid_nodes = []
+
+    def update(self, dt):
+        self.camera.update(dt)
+        if self.camera.dirty:
+            self.bg_dirty = True
+            self.camera.dirty = False
+
+        if self.tooltip_timer > 0:
+            self.tooltip_timer -= 1
+            
+        if self.status_timer > 0:
+            self.status_timer -= 1
+
+        if self.game.game_over and not self.game_over_shown:
+            self._handle_game_over()
+            
+        red_stars = self.game.red.star_points
+        blue_stars = self.game.blue.star_points
+        if red_stars != self._prev_red_stars:
+            self.red_star_label.set_value(red_stars)
+            self._prev_red_stars = red_stars
+            self._emit_star_capture_particles("red")
+            play_sound(SND_STAR)
+        if blue_stars != self._prev_blue_stars:
+            self.blue_star_label.set_value(blue_stars)
+            self._prev_blue_stars = blue_stars
+            self._emit_star_capture_particles("blue")
+            play_sound(SND_STAR)
+            
+        if self.valid_nodes and not hasattr(self, '_pulse_tween_active'):
+            self._pulse_tween_active = True
+            TWEEN.create_tween(self, "placement_pulse_scale", 1.15, 0.4, 0, EASE_SINE_IN_OUT)
+        elif not self.valid_nodes:
+            self._pulse_tween_active = False
+            self.placement_pulse_scale = 1.0
+
+        if self.game.pending_skill:
+            self.skill_pulse_time += dt
+            current_targets = self.game.get_skill_target_nodes()
+            if current_targets != self.skill_target_nodes:
+                self.skill_target_nodes = current_targets
+        else:
+            if self.skill_target_nodes:
+                self.skill_target_nodes = []
+            self.skill_pulse_time = 0.0
+
+        self.particles.update()
+
+        if self.net_waiting_sync:
+            self.watchdog_timer += dt
+            if self.watchdog_timer >= 3.5:
+                self.watchdog_timer = 0.0
+                if self.net_client:
+                    self.net_client.send_action({"act_type": "REQ_SYNC_SNAPSHOT"})
+                self.status_msg = "同步连接轻微延迟，正在自动请求对齐..."
+                self.status_timer = 60
+
+        if self.ai_bot is not None and not self.game.game_over:
+            self.update_ai_turn(dt)
+
+        self._update_net_messages()
+
+    def update_ai_turn(self, dt):
+        self.ai_timer += dt
+        if self.ai_timer < 0.55: return
+        self.ai_timer = 0.0
+        if self.game.current_player.color != self.ai_bot.player_color: return
+        action = self.ai_bot.decide_action(self.game)
+        self._execute_ai_action(action)
+
+    def _execute_ai_action(self, action: dict):
+        atype = action.get("type")
+        if atype == "place":
+            cmd = GameCommand("PLAY_PIECE", source_player=self.ai_bot.player_color,
+                              payload={"troop_key": action.get("troop_key"), "node_id": action.get("target_nid")})
+            self.dispatcher.dispatch(cmd)
+        elif atype == "cast_skill":
+            cmd = GameCommand("CAST_SKILL", source_player=self.ai_bot.player_color,
+                              payload={"target_nid": action.get("target_nid")})
+            self.dispatcher.dispatch(cmd)
+        elif atype == "undo":
+            self._undo_action()
+        elif atype == "draw":
+            cmd = GameCommand("DRAW_CARD", source_player=self.ai_bot.player_color)
+            self.dispatcher.dispatch(cmd)
+        elif atype == "end_turn":
+            cmd = GameCommand("END_TURN", source_player=self.ai_bot.player_color)
+            self.dispatcher.dispatch(cmd)
+
+    def _update_net_messages(self):
+        if self.game_mode != "net" or not self.net_client: return
+        while True:
+            msg = self.net_client.get_message(timeout=0.0)
+            if not msg: break
+            msg_type = msg.get("type")
+            if msg_type != "action": continue
+            payload = msg.get("payload", {})
+            if payload.get("act_type") == "REQ_SYNC_SNAPSHOT" and self.is_host:
+                self._sync_init_to_client()
+                continue
+            if "action_type" in payload and "seq_id" in payload:
+                cmd = GameCommand.from_dict(payload)
+                self.dispatcher.dispatch(cmd, is_remote=True)
+                if cmd.action_type == "SYNC_INIT":
+                    self.net_waiting_sync = False
+                    self.watchdog_timer = 0.0
+            else:
+                act_type = payload.get("act_type")
+                if act_type == "sync_init":
+                    self._apply_sync_init(payload)
+                    self.net_waiting_sync = False
+                    self.watchdog_timer = 0.0
+                elif act_type == "place":
+                    cmd = GameCommand("PLAY_PIECE", source_player=payload.get("player", "blue"),
+                                      payload={"troop_key": str(payload.get("troop_key")), "node_id": int(payload.get("node_id", -1))})
+                    self.dispatcher.dispatch(cmd, is_remote=True)
+                elif act_type == "draw":
+                    cmd = GameCommand("DRAW_CARD", source_player=payload.get("player", "blue"))
+                    self.dispatcher.dispatch(cmd, is_remote=True)
+                elif act_type == "end_turn":
+                    cmd = GameCommand("END_TURN", source_player=payload.get("player", "blue"))
+                    self.dispatcher.dispatch(cmd, is_remote=True)
+
+    def _net_send_action(self, act_type: str, **kwargs):
+        if self.game_mode != "net" or not self.net_client: return
+        payload = {"act_type": act_type, "player": self.local_player_color}
+        payload.update(kwargs)
+        self.net_client.send_action(payload)
+
+    def _sync_init_to_client(self):
+        if not self.net_client: return
+        cmd = GameCommand("SYNC_INIT", source_player="system",
+                          payload={"map_data": self._map_data_dict, "game_state": self.game.to_dict()})
+        self.net_client.send_action(cmd.to_dict())
+
+    def _apply_sync_init(self, payload: dict):
+        try:
+            if "map_data" in payload:
+                self.game.board.load_from_dict(payload["map_data"])
+                self._map_data_dict = payload["map_data"]
+            if "game_state" in payload:
+                self.game.from_dict(payload["game_state"])
+            self.calc_map_transform()
+            self.bg_dirty = True
+            self.net_waiting_sync = False
+            self.watchdog_timer = 0.0
+            logger.info("辅机 sync_init 同步完成，游戏状态已恢复")
+        except Exception as e:
+            logger.error(f"辅机 sync_init 恢复异常: {e}")
+
+    def draw(self, surface):
+        surface.fill(TOY_COLORS["bg_cream"])
+        self._draw_board(surface)
+        self._draw_hand(surface)
+        self._draw_info(surface)
+        self._draw_status_msg(surface)
+        
+        t = self.camera
+        valid_set = set(nd.nid for nd in self.valid_nodes) if self.drag_mgr.dragging else None
+        valid_check = (lambda tgt: tgt.nid in valid_set) if valid_set is not None else None
+        target_pos_func = lambda tgt: t.world_to_screen(tgt.x, tgt.y)
+        hl_radius = t.scaled_radius(NODE_RENDER_RADIUS) + int(t.apply_to_size(6))
+        hl_width = max(2, int(4 * t.scale))
+        self.drag_mgr.draw_target_highlight(surface, target_pos_func=target_pos_func,
+                                            valid_check_func=valid_check,
+                                            highlight_radius=hl_radius, highlight_width=hl_width)
+        self.drag_mgr.draw(surface)
+        if self.game.game_over and not self.ui_mgr.has_modal:
+            self._draw_game_over(surface)
+            
+        self._draw_hover_panel(surface)
+        self._draw_tooltip(surface)  
+        
+        self.particles.draw(surface)
+        self.vignette.render(surface)
+        for widget in self.widgets:
+            widget.draw(surface)
+        self.ui_mgr.draw_modals(surface)
+        
+        if self.net_waiting_sync:
+            overlay = pygame.Surface((self.manager.WIN_W, self.manager.WIN_H), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 140))
+            surface.blit(overlay, (0, 0))
+            pw, ph = 360, 120
+            px, py = self.manager.WIN_W // 2 - pw // 2, self.manager.WIN_H // 2 - ph // 2
+            panel_surf = pygame.Surface((pw, ph), pygame.SRCALPHA)
+            draw_rounded_rect(panel_surf, TOY_COLORS["panel_bg"], panel_surf.get_rect(), radius=16)
+            pygame.draw.rect(panel_surf, TOY_COLORS["primary_yellow"], panel_surf.get_rect(), 4, border_radius=16)
+            surface.blit(panel_surf, (px, py))
+            font = get_font(24, bold=True, style="chinese")
+            txt = font.render("等待主机同步中...", True, TOY_COLORS["dark_text"])
+            surface.blit(txt, (px + pw // 2 - txt.get_width() // 2, py + ph // 2 - txt.get_height() // 2))
+
+    def _draw_status_msg(self, surface):
+        if self.status_timer > 0 and self.status_msg:
+            font = get_font(28, bold=True, style="chinese")
+            txt_surf = font.render(self.status_msg, True, TOY_COLORS["dark_text"])
+            pw = txt_surf.get_width() + 80
+            ph = txt_surf.get_height() + 24
+            bg_rect = pygame.Rect(0, 0, pw, ph)
+            bg_rect.centerx = self.manager.WIN_W // 2
+            bg_rect.y = 20  
+            
+            bg_surf = pygame.Surface((pw, ph), pygame.SRCALPHA)
+            draw_rounded_rect(bg_surf, (255, 255, 245, 240), bg_surf.get_rect(), radius=18)
+            pygame.draw.rect(bg_surf, TOY_COLORS["secondary_cyan"], bg_surf.get_rect(), 4, border_radius=18)
+            
+            surface.blit(bg_surf, bg_rect.topleft)
+            surface.blit(txt_surf, (bg_rect.x + 40, bg_rect.y + 12))
+
+    def _draw_tooltip(self, surface):
+        if self.tooltip_timer > 0 and self.tooltip_text:
+            if '\n' in self.tooltip_text:
+                lines = self.tooltip_text.split('\n')
+                font = get_font(16, style="chinese")
+                max_w = max(font.size(line)[0] for line in lines)
+                line_h = font.get_linesize() + 6
+                bg_rect = pygame.Rect(self.tooltip_pos[0], self.tooltip_pos[1], max_w + 24, len(lines)*line_h + 16)
+                
+                if bg_rect.right > self.manager.WIN_W:
+                    bg_rect.x = self.manager.WIN_W - bg_rect.w - 5
+                if bg_rect.bottom > self.manager.WIN_H:
+                    bg_rect.y = self.manager.WIN_H - bg_rect.h - 5
+                    
+                bg_surf = pygame.Surface((bg_rect.w, bg_rect.h), pygame.SRCALPHA)
+                draw_rounded_rect(bg_surf, (*TOY_COLORS["panel_bg"][:3], 240), bg_surf.get_rect(), radius=10)
+                pygame.draw.rect(bg_surf, TOY_COLORS["panel_stroke"], bg_surf.get_rect(), 2, border_radius=10)
+                surface.blit(bg_surf, bg_rect.topleft)
+                
+                for i, line in enumerate(lines):
+                    color = TOY_COLORS["dark_text"]
+                    if line.startswith("技能"): color = TOY_COLORS["accent_coral"]
+                    elif line.startswith("【"): color = TOY_COLORS["secondary_cyan"]
+                    txt_surf = font.render(line, True, color)
+                    surface.blit(txt_surf, (bg_rect.x + 12, bg_rect.y + 10 + i * line_h))
+            else:
+                font = get_font(16, style="chinese")
+                txt_surf = font.render(self.tooltip_text, True, TOY_COLORS["dark_text"])
+                bg_rect = pygame.Rect(self.tooltip_pos[0], self.tooltip_pos[1], txt_surf.get_width() + 20, txt_surf.get_height() + 12)
+                
+                if bg_rect.right > self.manager.WIN_W: bg_rect.x = self.manager.WIN_W - bg_rect.w - 5
+                if bg_rect.bottom > self.manager.WIN_H: bg_rect.y = self.manager.WIN_H - bg_rect.h - 5
+                
+                bg_surf = pygame.Surface((bg_rect.w, bg_rect.h), pygame.SRCALPHA)
+                draw_rounded_rect(bg_surf, (*TOY_COLORS["panel_bg"][:3], 240), bg_surf.get_rect(), radius=8)
+                pygame.draw.rect(bg_surf, TOY_COLORS["panel_stroke"], bg_surf.get_rect(), 2, border_radius=8)
+                surface.blit(bg_surf, bg_rect.topleft)
+                surface.blit(txt_surf, (bg_rect.x + 10, bg_rect.y + 6))
+
+    def _make_shadow_surface(self, half_size):
+        size = (half_size + 8) * 2
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        center = size // 2
+        shadow_rect = pygame.Rect(center - half_size - 2, center - half_size - 2, (half_size + 2) * 2, (half_size + 2) * 2)
+        pygame.draw.rect(surf, (0, 0, 0, 40), shadow_rect, border_radius=TILE_ROUND_RADIUS + 2)
+        return surf
+
+    def _make_highlight_surface(self, half_size):
+        size = half_size * 2
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        hl_rect = pygame.Rect(half_size // 3, half_size // 3, half_size, half_size)
+        pygame.draw.rect(surf, (255, 255, 255, 35), hl_rect, border_radius=TILE_ROUND_RADIUS)
+        return surf
+
+    def _rebuild_bg_cache(self):
+        self.bg_cache = pygame.Surface((self.manager.WIN_W, self.manager.WIN_H))
+        self.bg_cache.fill(BG_CREAM)
+        tile_blit_grid(self.bg_cache, self._grid_tile_surf)
+        self._draw_roads(self.bg_cache)
+        self._draw_area_bounds(self.bg_cache)
+        self._draw_terrain_base(self.bg_cache)
+        self.bg_dirty = False
+
+    def _draw_roads(self, surface):
+        board = self.game.board
+        t = self.camera
+        for u in board.adj:
+            un = board.get_node(u)
+            if un is None: continue
+            sx1, sy1 = t.world_to_screen(un.x, un.y)
+            for v in board.adj[u]:
+                if v <= u: continue
+                vn = board.get_node(v)
+                if vn is None: continue
+                sx2, sy2 = t.world_to_screen(vn.x, vn.y)
+                start = pygame.Vector2(sx1, sy1)
+                end = pygame.Vector2(sx2, sy2)
+                dist = (end - start).length()
+                if dist < t.apply_to_size(NODE_RENDER_RADIUS) * 2.5: continue
+                dir_vec = (end - start).normalize()
+                shrink_u = t.apply_to_size(NODE_RENDER_RADIUS + 2)
+                if un.is_hq: shrink_u += t.apply_to_size(8)
+                shrink_v = t.apply_to_size(NODE_RENDER_RADIUS + 2)
+                if vn.is_hq: shrink_v += t.apply_to_size(8)
+                start_edge = start + dir_vec * shrink_u
+                end_edge = end - dir_vec * shrink_v
+                road_width = max(4, int(8 * t.scale))
+                draw_toy_plastic_road(surface, (int(start_edge.x), int(start_edge.y)), (int(end_edge.x), int(end_edge.y)), ROAD_COLOR, width=road_width)
+
+    def _draw_terrain_base(self, surface):
+        board = self.game.board
+        t = self.camera
+        nr = t.scaled_radius(NODE_RENDER_RADIUS)
+        nr_hq = nr + max(1, int(4 * t.scale))
+        shadow_normal = self._make_shadow_surface(nr)
+        shadow_hq = self._make_shadow_surface(nr_hq)
+        highlight_surf = self._make_highlight_surface(nr)
+
+        for nid, nd in board.nodes.items():
+            sx, sy = t.world_to_screen(nd.x, nd.y)
+            x, y = int(sx), int(sy)
+            terrain_color = TERRAIN_COLOR.get(nd.terrain_key, FALLBACK_GRAY)
+            half = nr_hq if nd.is_hq else nr
+            shadow = shadow_hq if nd.is_hq else shadow_normal
+            shadow_offset = max(1, int(3 * t.scale))
+            shadow_rect = shadow.get_rect(center=(x + shadow_offset, y + shadow_offset))
+            surface.blit(shadow, shadow_rect)
+            tile_rect = pygame.Rect(x - half, y - half, half * 2, half * 2)
+            pygame.draw.rect(surface, terrain_color, tile_rect, border_radius=TILE_ROUND_RADIUS)
+            border_color = get_border_color(nd.terrain_key)
+            border_w = max(2, int(4 * t.scale))
+            pygame.draw.rect(surface, border_color, tile_rect, border_w, border_radius=TILE_ROUND_RADIUS)
+            hl_rect = highlight_surf.get_rect(center=(x, y))
+            surface.blit(highlight_surf, hl_rect)
+
+    def _draw_terrain_icons(self, surface):
+        board = self.game.board
+        t = self.camera
+        nr = t.scaled_radius(NODE_RENDER_RADIUS)
+        nr_hq = nr + max(1, int(4 * t.scale))
+        for nid, nd in board.nodes.items():
+            sx, sy = t.world_to_screen(nd.x, nd.y)
+            x, y = int(sx), int(sy)
+            half = nr_hq if nd.is_hq else nr
+            inner_half = half - int(TILE_PADDING * t.scale)
+            ter_size = max(4, int(inner_half * 1.4))
+            ter_surf = get_cached_terrain(nd.terrain_key, target_size=ter_size)
+            surface.blit(ter_surf, (x - ter_surf.get_width() // 2, y - ter_surf.get_height() // 2))
+
+    def _draw_board(self, surface):
+        if self.bg_dirty or self.bg_cache is None:
+            self._rebuild_bg_cache()
+        surface.blit(self.bg_cache, (0, 0))
+
+        board = self.game.board
+        t = self.camera
+        valid_set = set(nd.nid for nd in self.valid_nodes)
+        nr = t.scaled_radius(NODE_RENDER_RADIUS)
+        nr_hq = nr + max(1, int(4 * t.scale))
+
+        self._draw_faction_overlay(surface, nr, nr_hq)
+
+        for nid, node in board.nodes.items():
+            if node.is_hq:
+                sx, sy = t.world_to_screen(node.x, node.y)
+                x, y = int(sx), int(sy)
+                half = nr_hq
+                hq_color = PLAYER_COLORS.get(node.hq_owner, FALLBACK_GRAY)
+                alpha = int(128 + 64 * math.sin(pygame.time.get_ticks() * 0.005))
+                ring_surf = pygame.Surface((half * 2 + 10, half * 2 + 10), pygame.SRCALPHA)
+                center = half + 5
+                ring_rect = pygame.Rect(center - half - 3, center - half - 3, (half + 3) * 2, (half + 3) * 2)
+                ring_w = max(2, int(4 * t.scale))
+                pygame.draw.rect(ring_surf, (*hq_color, alpha), ring_rect, ring_w, border_radius=TILE_ROUND_RADIUS + 3)
+                surface.blit(ring_surf, (x - center, y - center))
+
+        pending = getattr(self.game, 'pending_skill', None)
+        if pending:
+            src_node = board.get_node(pending["source_nid"])
+            src_sx, src_sy = (0, 0)
+            if src_node:
+                src_sx, src_sy = t.world_to_screen(src_node.x, src_node.y)
+
+            if self.skill_target_nodes:
+                pulse_alpha = int(160 + 80 * math.sin(self.skill_pulse_time * 4.0))
+                pulse_expand = int(4 * math.sin(self.skill_pulse_time * 4.0))
+                for nd in self.skill_target_nodes:
+                    sx, sy = t.world_to_screen(nd.x, nd.y)
+                    x, y = int(sx), int(sy)
+                    half = nr_hq if nd.is_hq else nr
+                    skill_half = half + max(2, int(6 * t.scale)) + pulse_expand
+                    skill_surf = pygame.Surface((skill_half * 2 + 6, skill_half * 2 + 6), pygame.SRCALPHA)
+                    center = skill_half + 3
+                    skill_rect = pygame.Rect(center - skill_half, center - skill_half, skill_half * 2, skill_half * 2)
+                    skill_w = max(3, int(5 * t.scale))
+                    pygame.draw.rect(skill_surf, (255, 50, 50, pulse_alpha), skill_rect, skill_w, border_radius=TILE_ROUND_RADIUS + 2)
+                    surface.blit(skill_surf, (x - center, y - center))
+
+            if self.hover_node and src_node and self.hover_node in self.skill_target_nodes:
+                tgt_sx, tgt_sy = t.world_to_screen(self.hover_node.x, self.hover_node.y)
+                line_w = max(2, int(5 * t.scale * self.placement_pulse_scale))
+                laser_alpha = int(180 + 60 * math.sin(self.skill_pulse_time * 4.0))
+                laser_surf = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+                pygame.draw.line(laser_surf, (255, 80, 80, laser_alpha), (int(src_sx), int(src_sy)), (int(tgt_sx), int(tgt_sy)), line_w)
+                surface.blit(laser_surf, (0, 0))
+                mid_x = int((src_sx + tgt_sx) / 2)
+                mid_y = int((src_sy + tgt_sy) / 2)
+                glow_r = max(4, int(8 * t.scale))
+                pygame.draw.circle(surface, (255, 200, 200), (mid_x, mid_y), glow_r)
+
+            if self.skill_target_nodes:
+                p_text = "请点击高亮节点释放技能"
+                sub_text = "[ 右键 或 ESC 强制跳过 ]"
+                theme_color = TOY_COLORS["accent_coral"]
+            else:
+                p_text = "警告：技能无有效目标"
+                sub_text = "[ 请按 右键 或 ESC 强制跳过 ]"
+                theme_color = TOY_COLORS["danger_red"]
+
+            font_main = get_font(32, bold=True, style="chinese")
+            font_sub = get_font(20, bold=True, style="chinese")
+
+            surf_main = font_main.render(p_text, True, TOY_COLORS["dark_text"])
+            surf_sub = font_sub.render(sub_text, True, (100, 100, 100))
+
+            pw = max(surf_main.get_width(), surf_sub.get_width()) + 100
+            ph = 110
+            px = self.manager.WIN_W // 2 - pw // 2
+            py = 20  
+
+            prompt_panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
+            draw_rounded_rect(prompt_panel, (255, 250, 240, 245), prompt_panel.get_rect(), radius=20)
+            pygame.draw.rect(prompt_panel, theme_color, prompt_panel.get_rect(), 6, border_radius=20)
+
+            surface.blit(prompt_panel, (px, py))
+            surface.blit(surf_main, (px + pw//2 - surf_main.get_width()//2, py + 18))
+            surface.blit(surf_sub, (px + pw//2 - surf_sub.get_width()//2, py + 65))
+
+        elif valid_set:
+            for nid in valid_set:
+                node = board.get_node(nid)
+                if node is None: continue
+                sx, sy = t.world_to_screen(node.x, node.y)
+                x, y = int(sx), int(sy)
+                half = nr_hq if node.is_hq else nr
+                pulse_half = int(half * self.placement_pulse_scale) + max(2, int(6 * t.scale))
+                glow_color = lighten_color(PLAYER_COLORS[self.game.current_player_color], 60)
+                glow_surf = pygame.Surface((pulse_half * 2 + 4, pulse_half * 2 + 4), pygame.SRCALPHA)
+                center = pulse_half + 2
+                glow_w = max(2, int(4 * t.scale))
+                glow_rect = pygame.Rect(center - pulse_half, center - pulse_half, pulse_half * 2, pulse_half * 2)
+                pygame.draw.rect(glow_surf, (*glow_color, 160), glow_rect, glow_w, border_radius=TILE_ROUND_RADIUS)
+                surface.blit(glow_surf, (x - center, y - center))
+
+        self._draw_hover_highlight(surface, nr, nr_hq)
+        self._draw_terrain_icons(surface)
+        self._draw_all_stars(surface)
+        self._draw_garrison(surface, nr, nr_hq)
+
+    def _draw_faction_overlay(self, surface, nr, nr_hq):
+        board = self.game.board
+        t = self.camera
+        for nid, node in board.nodes.items():
+            if not node.top_troop: continue
+            sx, sy = t.world_to_screen(node.x, node.y)
+            x, y = int(sx), int(sy)
+            half = nr_hq if node.is_hq else nr
+            owner_color = PLAYER_COLORS.get(node.top_troop.owner, FALLBACK_GRAY)
+            tile_rect = pygame.Rect(x - half, y - half, half * 2, half * 2)
+            draw_alpha_rect(surface, (*owner_color, FACTION_BG_ALPHA), tile_rect, radius=TILE_ROUND_RADIUS)
+
+    def _draw_hover_highlight(self, surface, nr, nr_hq):
+        if self.hover_node is None or self.hover_alpha < 10: return
+        t = self.camera
+        nd = self.hover_node
+        sx, sy = t.world_to_screen(nd.x, nd.y)
+        x, y = int(sx), int(sy)
+        half = nr_hq if nd.is_hq else nr
+        tile_rect = pygame.Rect(x - half, y - half, half * 2, half * 2)
+        hover_surf = pygame.Surface((half * 2, half * 2), pygame.SRCALPHA)
+        border_w = max(2, int(3 * t.scale))
+        alpha = int(self.hover_alpha * 0.6)
+        pygame.draw.rect(hover_surf, (*BORDER_HOVER, alpha), hover_surf.get_rect(), border_w, border_radius=TILE_ROUND_RADIUS)
+        surface.blit(hover_surf, tile_rect.topleft)
+
+    def _draw_garrison(self, surface, nr, nr_hq):
+        board = self.game.board
+        t = self.camera
+        for nid, node in board.nodes.items():
+            if not node.top_troop: continue
+            sx, sy = t.world_to_screen(node.x, node.y)
+            x, y = int(sx), int(sy)
+            half = nr_hq if node.is_hq else nr
+            troop = node.top_troop
+            owner_color = PLAYER_COLORS.get(troop.owner, FALLBACK_GRAY)
+            base_half = half - max(2, int(8 * t.scale))
+            base_rect = pygame.Rect(x - base_half, y - base_half, base_half * 2, base_half * 2)
+            bg_surf = pygame.Surface((base_half * 2, base_half * 2), pygame.SRCALPHA)
+            pygame.draw.rect(bg_surf, (*owner_color, TEAM_BG_ALPHA), bg_surf.get_rect(), border_radius=TILE_ROUND_RADIUS)
+            surface.blit(bg_surf, base_rect.topleft)
+            base_w = max(1, int(2 * t.scale))
+            pygame.draw.rect(surface, BORDER_WHITE, base_rect, base_w, border_radius=TILE_ROUND_RADIUS)
+            tro_surf = get_cached_troop(troop.troop_key, troop.owner, target_size=int(base_half * 1.6))
+            surface.blit(tro_surf, (x - tro_surf.get_width() // 2, y - tro_surf.get_height() // 2))
+
+    def _draw_hover_panel(self, surface):
+        if self.hover_alpha < 10 or self.hover_node is None:
+            return
+        nd = self.hover_node
+        ter = TERRAIN_DATA.get(nd.terrain_key, {})
+        
+        panel_w = 320
+        panel_h = 100
+        if nd.stack:
+            panel_h += 30 + len(nd.stack) * 24
+            
+        panel_x = self.manager.WIN_W - panel_w - 20
+        panel_y = self.manager.WIN_H - panel_h - 100
+        
+        panel_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        alpha = int(self.hover_alpha * 0.92)
+        panel_surf.fill((*TOY_COLORS["panel_bg"][:3], alpha))
+        pygame.draw.rect(panel_surf, (*TOY_COLORS["panel_stroke"], alpha),
+                         panel_surf.get_rect(), 3, border_radius=14)
+        surface.blit(panel_surf, (panel_x, panel_y))
+        
+        name_font = get_font(22, bold=True, style="chinese")
+        name = ter.get("name", nd.terrain_key)
+        name_surf = name_font.render(name, True, TOY_COLORS["dark_text"])
+        title_x = panel_x + 14
+        surface.blit(name_surf, (title_x, panel_y + 12))
+        
+        font_desc = get_font(16, style="chinese")
+        desc = ter.get("desc", "")
+        line_h, max_chars = 22, 18
+        y_off = panel_y + 44
+        
+        for i in range(0, len(desc), max_chars):
+            line = desc[i:i + max_chars]
+            desc_surf = font_desc.render(line, True, (80, 80, 80))
+            surface.blit(desc_surf, (panel_x + 14, y_off))
+            y_off += line_h
+            
+        if nd.stack:
+            pygame.draw.line(surface, (200, 200, 200), (panel_x + 10, y_off + 4), (panel_x + panel_w - 10, y_off + 4))
+            y_off += 14
+            
+            stack_title = get_font(16, bold=True, style="chinese").render("当前地块堆叠列表 (从上到下):", True, TOY_COLORS["dark_text"])
+            surface.blit(stack_title, (panel_x + 14, y_off))
+            y_off += 24
+            
+            for idx, tp in enumerate(reversed(nd.stack)):
+                layer_txt = "顶层" if idx == 0 else f"第{len(nd.stack)-idx}层"
+                t_name = f"[{layer_txt}] {tp.name} (战力:{tp.number or 'J'})"
+                t_name_surf = get_font(16, bold=True, style="chinese").render(t_name, True, PLAYER_COLORS.get(tp.owner, (0,0,0)))
+                surface.blit(t_name_surf, (panel_x + 14, y_off))
+                y_off += 24
+
+    def _draw_area_bounds(self, surface):
+        board = self.game.board
+        if not board.nodes: return
+        t = self.camera
+        area_nodes = {}
+        for nid, node in board.nodes.items():
+            aid = node.area_id
+            area_nodes.setdefault(aid, []).append(node)
+        if not area_nodes: return
+        for aid, nodes_in_area in area_nodes.items():
+            if len(nodes_in_area) < 2: continue
+            xs = [t.world_to_screen(n.x, n.y)[0] for n in nodes_in_area]
+            ys = [t.world_to_screen(n.x, n.y)[1] for n in nodes_in_area]
+            pad = 18 * t.scale
+            min_x = min(xs) - pad
+            min_y = min(ys) - pad
+            max_x = max(xs) + pad
+            max_y = max(ys) + pad
+            rect = pygame.Rect(int(min_x), int(min_y), int(max_x - min_x), int(max_y - min_y))
+            bg_color = AREA_BOUNDS_COLORS[aid % len(AREA_BOUNDS_COLORS)]
+            border_color = darken_color(bg_color, 40)
+            bg_alpha = (*bg_color, 25)
+            stroke_alpha = (*border_color, 60)
+            bounds_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+            draw_rounded_rect(bounds_surf, bg_alpha, bounds_surf.get_rect(topleft=(0, 0)), radius=12, stroke_width=1, stroke_color=stroke_alpha)
+            surface.blit(bounds_surf, rect.topleft)
+
+    def _draw_all_stars(self, surface):
+        board = self.game.board
+        star_points = board.star_points
+        if not star_points: return
+        t = self.camera
+        star_size = max(8, int(14 * t.scale * 0.65))
+        area_node_map = {}
+        for nid, nd in board.nodes.items():
+            area_node_map.setdefault(nd.area_id, []).append(nd)
+
+        for sp in star_points:
+            if not sp.get("has_star", True): continue
+            aid = sp.get("area_id", -1)
+            wx, wy = sp["x"], sp["y"]
+            nodes_in_area = area_node_map.get(aid, [])
+            if len(nodes_in_area) >= 2:
+                xs = [n.x for n in nodes_in_area]
+                ys = [n.y for n in nodes_in_area]
+                cx = (min(xs) + max(xs)) / 2
+                cy = (min(ys) + max(ys)) / 2
+                offset_x = (max(xs) - min(xs)) * 0.12
+                offset_y = (max(ys) - min(ys)) * 0.12
+                wx = max(min(wx, cx + offset_x), cx - offset_x) if offset_x > 0 else cx
+                wy = max(min(wy, cy + offset_y), cy - offset_y) if offset_y > 0 else cy
+
+            sx, sy = t.world_to_screen(wx, wy)
+            cx, cy = int(sx), int(sy)
+            if aid in self.game.red.captured_areas:
+                star_surf = get_cached_star("red", star_size)
+            elif aid in self.game.blue.captured_areas:
+                star_surf = get_cached_star("blue", star_size)
+            else:
+                star_surf = get_cached_star("gray", star_size)
+            trans_surf = star_surf.copy()
+            trans_surf.set_alpha(190)
+            surface.blit(trans_surf, (cx - star_surf.get_width() // 2, cy - star_surf.get_height() // 2))
+
+
+```
+
+---
+
+### 第二部分：后端规则引擎的必修课（给开发者的指导）
+
+由于 `ui/game_screen.py` 只是表现层文件，真正的判定规则和地图计算都隐藏在你的后层中（通常在 **`game/game_logic.py`** 里）。为了满足你“推土机/爆弹不能放在敌方单位上”和“弹弓只需要距离为两格就能击杀”的要求，你需要在 `game_logic.py` 内加上以下三个逻辑：
+
+#### 1. 兵种的“叠放栈”保存策略（防止覆盖兵种消失）
+
+你要找到 `place_troop` 这个函数，在这个函数中放置兵种时，必须使用 **`node.stack.append(troop)`**，如果原先的代码写的是 `node.stack = [troop]` 或者在放上去之前把原有敌方部队移除了，你需要删掉那段代码。
+这样底层地块才会真正保存一个“栈（Stack）”，UI 层刚刚新加的“堆叠全景列表”也能完美发挥作用。
+
+#### 2. “推土机” 和 “爆弹” 不可堆叠的判定
+
+打开 `game/game_logic.py`，找到 **`get_valid_nodes(self, troop)`**。在循环 `self.board.nodes.values()` 时，加入这一段拦截：
+
+```python
+    def get_valid_nodes(self, troop):
+        valid_nodes = []
+        for nid, node in self.board.nodes.items():
+            # ... 原本的判定逻辑（是否相邻等） ...
+
+            # 拦截：推土机 和 爆弹 不能放在别的兵种上面
+            # 请替换 troop.name 为你字典里对应的名称或 key
+            if troop.name in ["推土机", "爆弹"]:
+                if len(node.stack) > 0:
+                    continue  # 此处有兵，不合法，跳过
+            
+            # ... 其他逻辑 ...
+
+```
+
+#### 3. “弹弓”的距离为两格就能击杀（无视连线中间有无障碍）
+
+找到 **`get_skill_target_nodes(self)`**（或者相似名称的处理二段技能范围的函数）。加入利用图算法计算距离为两格的专门处理：
+
+```python
+    def get_skill_target_nodes(self):
+        targets = []
+        source_nid = self.pending_skill.get("source_nid")
+        skill_troop_name = self.pending_skill.get("troop_name")  # 或者是 key
+
+        if skill_troop_name == "弹弓":
+            for nid, node in self.board.nodes.items():
+                if node.top_troop and node.top_troop.owner != self.current_player_color:
+                    # 调用 board 里的图算法获得最短距离
+                    distance = self.board.get_distance(source_nid, nid)
+                    if distance == 2:
+                        targets.append(node)
+            return targets
+        
+        # ... 其他技能的逻辑 ...
+
+```
+
+通过这套内外组合拳，整个对战系统就形成了极其强健、顺滑，不会有任何死锁、错乱、方块乱码的终极体验。

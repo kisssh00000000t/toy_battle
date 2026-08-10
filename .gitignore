@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Pytest
+.pytest_cache/
+
+# IDE / Tools
+.joycode/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Generated cache
+assets/cache/
+
+# Build
+*.spec
+build/
+dist/
+
+# OS
+Thumbs.db
+.DS_Store

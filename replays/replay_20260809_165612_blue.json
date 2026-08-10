@@ -1,0 +1,1114 @@
+{
+  "version": "2.0",
+  "map_source": "random",
+  "winner": "blue",
+  "star_win_goal": 4,
+  "first_player": "blue",
+  "map_data": {
+    "nodes": [
+      {
+        "nid": 0,
+        "x": 80,
+        "y": 400,
+        "terrain": "normal",
+        "is_hq": true,
+        "hq_owner": "red",
+        "area_id": 0
+      },
+      {
+        "nid": 1,
+        "x": 180,
+        "y": 280,
+        "terrain": "normal",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 0
+      },
+      {
+        "nid": 2,
+        "x": 180,
+        "y": 520,
+        "terrain": "castle_field",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 0
+      },
+      {
+        "nid": 3,
+        "x": 300,
+        "y": 200,
+        "terrain": "tropical_pool",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 0
+      },
+      {
+        "nid": 4,
+        "x": 300,
+        "y": 400,
+        "terrain": "normal",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 2
+      },
+      {
+        "nid": 5,
+        "x": 300,
+        "y": 600,
+        "terrain": "cursed_cemetery",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 0
+      },
+      {
+        "nid": 6,
+        "x": 420,
+        "y": 280,
+        "terrain": "city_of_clouds",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 2
+      },
+      {
+        "nid": 7,
+        "x": 420,
+        "y": 520,
+        "terrain": "station_metalx",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 2
+      },
+      {
+        "nid": 8,
+        "x": 500,
+        "y": 150,
+        "terrain": "normal",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 2
+      },
+      {
+        "nid": 9,
+        "x": 500,
+        "y": 400,
+        "terrain": "battlefield",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 2
+      },
+      {
+        "nid": 10,
+        "x": 500,
+        "y": 650,
+        "terrain": "normal",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 2
+      },
+      {
+        "nid": 11,
+        "x": 580,
+        "y": 280,
+        "terrain": "tropical_pool",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 2
+      },
+      {
+        "nid": 12,
+        "x": 580,
+        "y": 520,
+        "terrain": "castle_field",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 2
+      },
+      {
+        "nid": 13,
+        "x": 700,
+        "y": 200,
+        "terrain": "normal",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 1
+      },
+      {
+        "nid": 14,
+        "x": 700,
+        "y": 400,
+        "terrain": "cursed_cemetery",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 1
+      },
+      {
+        "nid": 15,
+        "x": 700,
+        "y": 600,
+        "terrain": "normal",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 1
+      },
+      {
+        "nid": 16,
+        "x": 820,
+        "y": 280,
+        "terrain": "station_metalx",
+        "is_hq": false,
+        "hq_owner": null,
+        "area_id": 1
+      },
+      {
+        "nid": 17,
+        "x": 820,
+        "y": 400,
+        "terrain": "normal",
+        "is_hq": true,
+        "hq_owner": "blue",
+        "area_id": 1
+      }
+    ],
+    "edges": [
+      {
+        "u": 0,
+        "v": 1
+      },
+      {
+        "u": 0,
+        "v": 2
+      },
+      {
+        "u": 1,
+        "v": 3
+      },
+      {
+        "u": 1,
+        "v": 4
+      },
+      {
+        "u": 2,
+        "v": 5
+      },
+      {
+        "u": 3,
+        "v": 6
+      },
+      {
+        "u": 3,
+        "v": 8
+      },
+      {
+        "u": 4,
+        "v": 6
+      },
+      {
+        "u": 4,
+        "v": 7
+      },
+      {
+        "u": 4,
+        "v": 9
+      },
+      {
+        "u": 5,
+        "v": 7
+      },
+      {
+        "u": 5,
+        "v": 10
+      },
+      {
+        "u": 6,
+        "v": 8
+      },
+      {
+        "u": 6,
+        "v": 11
+      },
+      {
+        "u": 7,
+        "v": 10
+      },
+      {
+        "u": 7,
+        "v": 12
+      },
+      {
+        "u": 8,
+        "v": 11
+      },
+      {
+        "u": 8,
+        "v": 13
+      },
+      {
+        "u": 9,
+        "v": 11
+      },
+      {
+        "u": 9,
+        "v": 12
+      },
+      {
+        "u": 10,
+        "v": 12
+      },
+      {
+        "u": 10,
+        "v": 15
+      },
+      {
+        "u": 11,
+        "v": 13
+      },
+      {
+        "u": 12,
+        "v": 14
+      },
+      {
+        "u": 12,
+        "v": 15
+      },
+      {
+        "u": 13,
+        "v": 14
+      },
+      {
+        "u": 13,
+        "v": 16
+      },
+      {
+        "u": 14,
+        "v": 16
+      },
+      {
+        "u": 14,
+        "v": 17
+      },
+      {
+        "u": 15,
+        "v": 17
+      },
+      {
+        "u": 16,
+        "v": 17
+      }
+    ],
+    "area_centers": {},
+    "star_points": []
+  },
+  "initial_decks": {
+    "red": [
+      15,
+      8,
+      12,
+      11,
+      15,
+      9,
+      7,
+      10,
+      4,
+      17,
+      3,
+      13,
+      1,
+      14,
+      11,
+      1,
+      16,
+      4,
+      12,
+      15,
+      14,
+      14,
+      16,
+      17,
+      16,
+      6,
+      "joker",
+      "joker",
+      6,
+      6,
+      9,
+      5,
+      9,
+      2,
+      2,
+      "joker",
+      7,
+      5,
+      13,
+      12,
+      3
+    ],
+    "blue": [
+      11,
+      6,
+      14,
+      10,
+      2,
+      9,
+      "joker",
+      6,
+      7,
+      13,
+      8,
+      6,
+      9,
+      15,
+      17,
+      4,
+      12,
+      1,
+      4,
+      "joker",
+      14,
+      11,
+      13,
+      3,
+      7,
+      12,
+      4,
+      9,
+      16,
+      8,
+      16,
+      1
+    ]
+  },
+  "action_log": [
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Rex owner=blue>",
+        "troop_key": 17,
+        "node": 14,
+        "terrain": "cursed_cemetery"
+      }
+    },
+    {
+      "seq_id": 0,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 17,
+        "node_id": 14
+      },
+      "random_seed": null,
+      "timestamp": 1786265701554
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 2
+      }
+    },
+    {
+      "seq_id": 1,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265702112
+    },
+    {
+      "type": "place",
+      "player": "red",
+      "data": {
+        "player": "red",
+        "troop": "<Troop Roxy owner=red>",
+        "troop_key": 7,
+        "node": 1,
+        "terrain": "normal"
+      }
+    },
+    {
+      "seq_id": 2,
+      "action_type": "PLAY_PIECE",
+      "source_player": "red",
+      "payload": {
+        "troop_key": 7,
+        "node_id": 1
+      },
+      "random_seed": null,
+      "timestamp": 1786265706667
+    },
+    {
+      "seq_id": 3,
+      "action_type": "END_TURN",
+      "source_player": "red",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265707629
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Cheery owner=blue>",
+        "troop_key": 15,
+        "node": 12,
+        "terrain": "castle_field"
+      }
+    },
+    {
+      "seq_id": 4,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 15,
+        "node_id": 12
+      },
+      "random_seed": null,
+      "timestamp": 1786265707679
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 2
+      }
+    },
+    {
+      "seq_id": 5,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265708243
+    },
+    {
+      "type": "place",
+      "player": "red",
+      "data": {
+        "player": "red",
+        "troop": "<Troop Captain owner=red>",
+        "troop_key": 2,
+        "node": 4,
+        "terrain": "normal"
+      }
+    },
+    {
+      "seq_id": 6,
+      "action_type": "PLAY_PIECE",
+      "source_player": "red",
+      "payload": {
+        "troop_key": 2,
+        "node_id": 4
+      },
+      "random_seed": null,
+      "timestamp": 1786265710198
+    },
+    {
+      "type": "place",
+      "player": "red",
+      "data": {
+        "player": "red",
+        "troop": "<Troop Bulby owner=red>",
+        "troop_key": 8,
+        "node": 9,
+        "terrain": "battlefield"
+      }
+    },
+    {
+      "seq_id": 7,
+      "action_type": "PLAY_PIECE",
+      "source_player": "red",
+      "payload": {
+        "troop_key": 8,
+        "node_id": 9
+      },
+      "random_seed": null,
+      "timestamp": 1786265714080
+    },
+    {
+      "seq_id": 8,
+      "action_type": "CAST_SKILL",
+      "source_player": "red",
+      "payload": {
+        "target_nid": 12
+      },
+      "random_seed": null,
+      "timestamp": 1786265714971
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Rex owner=blue>",
+        "troop_key": 17,
+        "node": 14,
+        "terrain": "cursed_cemetery"
+      }
+    },
+    {
+      "seq_id": 9,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 17,
+        "node_id": 14
+      },
+      "random_seed": null,
+      "timestamp": 1786265714971
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 2
+      }
+    },
+    {
+      "seq_id": 10,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265715535
+    },
+    {
+      "seq_id": 11,
+      "action_type": "END_TURN",
+      "source_player": "red",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265719397
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Rex owner=blue>",
+        "troop_key": 17,
+        "node": 12,
+        "terrain": "castle_field"
+      }
+    },
+    {
+      "seq_id": 12,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 17,
+        "node_id": 12
+      },
+      "random_seed": null,
+      "timestamp": 1786265719461
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 1
+      }
+    },
+    {
+      "seq_id": 13,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265720023
+    },
+    {
+      "type": "place",
+      "player": "red",
+      "data": {
+        "player": "red",
+        "troop": "<Troop XB-42 owner=red>",
+        "troop_key": 5,
+        "node": 6,
+        "terrain": "city_of_clouds"
+      }
+    },
+    {
+      "seq_id": 14,
+      "action_type": "PLAY_PIECE",
+      "source_player": "red",
+      "payload": {
+        "troop_key": 5,
+        "node_id": 6
+      },
+      "random_seed": null,
+      "timestamp": 1786265725946
+    },
+    {
+      "seq_id": 15,
+      "action_type": "END_TURN",
+      "source_player": "red",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265727162
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Rex owner=blue>",
+        "troop_key": 17,
+        "node": 14,
+        "terrain": "cursed_cemetery"
+      }
+    },
+    {
+      "seq_id": 16,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 17,
+        "node_id": 14
+      },
+      "random_seed": null,
+      "timestamp": 1786265727307
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 1
+      }
+    },
+    {
+      "seq_id": 17,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265727864
+    },
+    {
+      "type": "place",
+      "player": "red",
+      "data": {
+        "player": "red",
+        "troop": "<Troop Bandy owner=red>",
+        "troop_key": 11,
+        "node": 11,
+        "terrain": "tropical_pool"
+      }
+    },
+    {
+      "seq_id": 18,
+      "action_type": "PLAY_PIECE",
+      "source_player": "red",
+      "payload": {
+        "troop_key": 11,
+        "node_id": 11
+      },
+      "random_seed": null,
+      "timestamp": 1786265730310
+    },
+    {
+      "seq_id": 19,
+      "action_type": "CAST_SKILL",
+      "source_player": "red",
+      "payload": {
+        "target_nid": 14
+      },
+      "random_seed": null,
+      "timestamp": 1786265735428
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Boom-Boom owner=blue>",
+        "troop_key": 16,
+        "node": 14,
+        "terrain": "cursed_cemetery"
+      }
+    },
+    {
+      "seq_id": 20,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 16,
+        "node_id": 14
+      },
+      "random_seed": null,
+      "timestamp": 1786265735740
+    },
+    {
+      "seq_id": 21,
+      "action_type": "END_TURN",
+      "source_player": "red",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265740503
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Cheery owner=blue>",
+        "troop_key": 15,
+        "node": 14,
+        "terrain": "cursed_cemetery"
+      }
+    },
+    {
+      "seq_id": 22,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 15,
+        "node_id": 14
+      },
+      "random_seed": null,
+      "timestamp": 1786265740799
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 2
+      }
+    },
+    {
+      "seq_id": 23,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265741361
+    },
+    {
+      "type": "draw",
+      "player": "red",
+      "data": {
+        "player": "red",
+        "count": 2
+      }
+    },
+    {
+      "seq_id": 24,
+      "action_type": "DRAW_CARD",
+      "source_player": "red",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265742803
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Muddy owner=blue>",
+        "troop_key": 14,
+        "node": 7,
+        "terrain": "station_metalx"
+      }
+    },
+    {
+      "seq_id": 25,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 14,
+        "node_id": 7
+      },
+      "random_seed": null,
+      "timestamp": 1786265743033
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 1
+      }
+    },
+    {
+      "seq_id": 26,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265743597
+    },
+    {
+      "type": "place",
+      "player": "red",
+      "data": {
+        "player": "red",
+        "troop": "<Troop Skully owner=red>",
+        "troop_key": 1,
+        "node": 13,
+        "terrain": "normal"
+      }
+    },
+    {
+      "seq_id": 27,
+      "action_type": "PLAY_PIECE",
+      "source_player": "red",
+      "payload": {
+        "troop_key": 1,
+        "node_id": 13
+      },
+      "random_seed": null,
+      "timestamp": 1786265746388
+    },
+    {
+      "seq_id": 28,
+      "action_type": "END_TURN",
+      "source_player": "red",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265747827
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Bandy owner=blue>",
+        "troop_key": 11,
+        "node": 5,
+        "terrain": "cursed_cemetery"
+      }
+    },
+    {
+      "seq_id": 29,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 11,
+        "node_id": 5
+      },
+      "random_seed": null,
+      "timestamp": 1786265748090
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 1
+      }
+    },
+    {
+      "seq_id": 30,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265748647
+    },
+    {
+      "seq_id": 31,
+      "action_type": "CAST_SKILL",
+      "source_player": "red",
+      "payload": {
+        "target_nid": 12
+      },
+      "random_seed": null,
+      "timestamp": 1786265752140
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Kubi owner=blue>",
+        "troop_key": 10,
+        "node": 12,
+        "terrain": "castle_field"
+      }
+    },
+    {
+      "seq_id": 32,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 10,
+        "node_id": 12
+      },
+      "random_seed": null,
+      "timestamp": 1786265752549
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 1
+      }
+    },
+    {
+      "seq_id": 33,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265753108
+    },
+    {
+      "seq_id": 34,
+      "action_type": "CAST_SKILL",
+      "source_player": "red",
+      "payload": {
+        "target_nid": 14
+      },
+      "random_seed": null,
+      "timestamp": 1786265756518
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Jumbo owner=blue>",
+        "troop_key": 3,
+        "node": 13,
+        "terrain": "normal"
+      }
+    },
+    {
+      "seq_id": 35,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 3,
+        "node_id": 13
+      },
+      "random_seed": null,
+      "timestamp": 1786265757045
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 1
+      }
+    },
+    {
+      "seq_id": 36,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265757609
+    },
+    {
+      "type": "place",
+      "player": "red",
+      "data": {
+        "player": "red",
+        "troop": "<Troop Bulby owner=red>",
+        "troop_key": 8,
+        "node": 8,
+        "terrain": "normal"
+      }
+    },
+    {
+      "seq_id": 37,
+      "action_type": "PLAY_PIECE",
+      "source_player": "red",
+      "payload": {
+        "troop_key": 8,
+        "node_id": 8
+      },
+      "random_seed": null,
+      "timestamp": 1786265768317
+    },
+    {
+      "seq_id": 38,
+      "action_type": "CAST_SKILL",
+      "source_player": "red",
+      "payload": {
+        "target_nid": 13
+      },
+      "random_seed": null,
+      "timestamp": 1786265768828
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Kubi owner=blue>",
+        "troop_key": 10,
+        "node": 2,
+        "terrain": "castle_field"
+      }
+    },
+    {
+      "seq_id": 39,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 10,
+        "node_id": 2
+      },
+      "random_seed": null,
+      "timestamp": 1786265769373
+    },
+    {
+      "type": "draw",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "count": 1
+      }
+    },
+    {
+      "seq_id": 40,
+      "action_type": "DRAW_CARD",
+      "source_player": "blue",
+      "payload": {},
+      "random_seed": null,
+      "timestamp": 1786265769933
+    },
+    {
+      "seq_id": 41,
+      "action_type": "CAST_SKILL",
+      "source_player": "red",
+      "payload": {
+        "target_nid": 5
+      },
+      "random_seed": null,
+      "timestamp": 1786265772102
+    },
+    {
+      "type": "place",
+      "player": "blue",
+      "data": {
+        "player": "blue",
+        "troop": "<Troop Bulby owner=blue>",
+        "troop_key": 8,
+        "node": 0,
+        "terrain": "normal"
+      }
+    },
+    {
+      "seq_id": 42,
+      "action_type": "PLAY_PIECE",
+      "source_player": "blue",
+      "payload": {
+        "troop_key": 8,
+        "node_id": 0
+      },
+      "random_seed": null,
+      "timestamp": 1786265772169
+    }
+  ]
+}

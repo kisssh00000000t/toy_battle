@@ -1,0 +1,332 @@
+{
+  "nodes": [
+    {
+      "nid": 0,
+      "x": 74.4,
+      "y": 104.5,
+      "terrain": "normal",
+      "is_hq": true,
+      "hq_owner": "red",
+      "area_id": 0
+    },
+    {
+      "nid": 1,
+      "x": 369.4,
+      "y": 71.4,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 2,
+      "x": 570.2,
+      "y": 98.7,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 3,
+      "x": 838.5,
+      "y": 124.6,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 4,
+      "x": 1148.1,
+      "y": 69.4,
+      "terrain": "battlefield",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 5,
+      "x": 48.5,
+      "y": 254.7,
+      "terrain": "city_of_clouds",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 6,
+      "x": 345.7,
+      "y": 254.4,
+      "terrain": "castle_field",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 7,
+      "x": 602.2,
+      "y": 259.8,
+      "terrain": "city_of_clouds",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 8,
+      "x": 877.5,
+      "y": 257.9,
+      "terrain": "castle_field",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 9,
+      "x": 1127.1,
+      "y": 284.9,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 10,
+      "x": 66.8,
+      "y": 409.8,
+      "terrain": "battlefield",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 11,
+      "x": 371.6,
+      "y": 448.6,
+      "terrain": "battlefield",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 12,
+      "x": 629.8,
+      "y": 435.7,
+      "terrain": "city_of_clouds",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 13,
+      "x": 875.3,
+      "y": 436.0,
+      "terrain": "city_of_clouds",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 14,
+      "x": 1106.3,
+      "y": 415.4,
+      "terrain": "castle_field",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 15,
+      "x": 49.8,
+      "y": 618.9,
+      "terrain": "tropical_pool",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 16,
+      "x": 361.9,
+      "y": 572.3,
+      "terrain": "normal",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 17,
+      "x": 619.3,
+      "y": 579.1,
+      "terrain": "volcanic_jungle",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 18,
+      "x": 855.1,
+      "y": 624.6,
+      "terrain": "battlefield",
+      "is_hq": false,
+      "hq_owner": null,
+      "area_id": 0
+    },
+    {
+      "nid": 19,
+      "x": 1100.0,
+      "y": 584.5,
+      "terrain": "normal",
+      "is_hq": true,
+      "hq_owner": "blue",
+      "area_id": 0
+    }
+  ],
+  "edges": [
+    {
+      "u": 3,
+      "v": 4
+    },
+    {
+      "u": 4,
+      "v": 9
+    },
+    {
+      "u": 16,
+      "v": 17
+    },
+    {
+      "u": 12,
+      "v": 13
+    },
+    {
+      "u": 5,
+      "v": 10
+    },
+    {
+      "u": 8,
+      "v": 9
+    },
+    {
+      "u": 14,
+      "v": 19
+    },
+    {
+      "u": 0,
+      "v": 5
+    },
+    {
+      "u": 9,
+      "v": 14
+    },
+    {
+      "u": 1,
+      "v": 6
+    },
+    {
+      "u": 17,
+      "v": 18
+    },
+    {
+      "u": 10,
+      "v": 15
+    },
+    {
+      "u": 13,
+      "v": 14
+    },
+    {
+      "u": 6,
+      "v": 11
+    },
+    {
+      "u": 18,
+      "v": 19
+    },
+    {
+      "u": 5,
+      "v": 6
+    },
+    {
+      "u": 0,
+      "v": 1
+    },
+    {
+      "u": 1,
+      "v": 2
+    },
+    {
+      "u": 10,
+      "v": 11
+    },
+    {
+      "u": 11,
+      "v": 16
+    },
+    {
+      "u": 2,
+      "v": 7
+    },
+    {
+      "u": 6,
+      "v": 7
+    },
+    {
+      "u": 15,
+      "v": 16
+    },
+    {
+      "u": 7,
+      "v": 12
+    },
+    {
+      "u": 12,
+      "v": 17
+    },
+    {
+      "u": 3,
+      "v": 8
+    },
+    {
+      "u": 2,
+      "v": 3
+    },
+    {
+      "u": 11,
+      "v": 12
+    },
+    {
+      "u": 8,
+      "v": 13
+    },
+    {
+      "u": 13,
+      "v": 18
+    },
+    {
+      "u": 7,
+      "v": 8
+    }
+  ],
+  "hq_red": 0,
+  "hq_blue": 19,
+  "area_centers": {
+    "0": [
+      601.875,
+      345.26
+    ]
+  },
+  "star_points": [
+    {
+      "x": 601.9,
+      "y": 345.3,
+      "area_id": 0,
+      "has_star": true
+    }
+  ],
+  "map_id": 0,
+  "difficulty": "normal",
+  "caribbean_mode": false,
+  "medal_goal": 3,
+  "node_count": 20,
+  "background": "bg_ocean"
+}
