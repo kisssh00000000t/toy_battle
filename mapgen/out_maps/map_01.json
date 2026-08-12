@@ -75,7 +75,7 @@
       "terrain": "castle_field",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 1
+      "area_id": 4
     },
     {
       "nid": 8,
@@ -84,7 +84,7 @@
       "terrain": "normal",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 1
+      "area_id": 4
     },
     {
       "nid": 9,
@@ -93,7 +93,7 @@
       "terrain": "tropical_pool",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 1
+      "area_id": 4
     },
     {
       "nid": 10,
@@ -102,7 +102,7 @@
       "terrain": "normal",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 1
+      "area_id": 4
     },
     {
       "nid": 11,
@@ -111,7 +111,7 @@
       "terrain": "station_metalx",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 2
+      "area_id": 1
     },
     {
       "nid": 12,
@@ -120,7 +120,7 @@
       "terrain": "normal",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 2
+      "area_id": 1
     },
     {
       "nid": 13,
@@ -129,7 +129,7 @@
       "terrain": "normal",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 2
+      "area_id": 1
     },
     {
       "nid": 14,
@@ -138,7 +138,7 @@
       "terrain": "cursed_cemetery",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 2
+      "area_id": 1
     },
     {
       "nid": 15,
@@ -147,7 +147,7 @@
       "terrain": "volcanic_jungle",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 3
+      "area_id": 2
     },
     {
       "nid": 16,
@@ -156,7 +156,7 @@
       "terrain": "station_metalx",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 3
+      "area_id": 2
     },
     {
       "nid": 17,
@@ -165,7 +165,7 @@
       "terrain": "city_of_clouds",
       "is_hq": false,
       "hq_owner": "",
-      "area_id": 3
+      "area_id": 2
     },
     {
       "nid": 18,
@@ -174,7 +174,7 @@
       "terrain": "normal",
       "is_hq": true,
       "hq_owner": "blue",
-      "area_id": 1
+      "area_id": 3
     }
   ],
   "edges": [

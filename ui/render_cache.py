@@ -266,14 +266,19 @@ def _pre_render_troops(use_persist_cache: bool = True):
             if surf is None:
                 surf = pygame.Surface((TROOP_ICON_SIZE, TROOP_ICON_SIZE), pygame.SRCALPHA)
                 if png_surf is not None:
-                    # PNG 素材 + 阵营色调叠加
+                    # PNG 素材 + 底部阵营色条（不覆盖全图，避免彩虹圈变脏）
                     scaled = pygame.transform.smoothscale(
                         png_surf, (TROOP_ICON_SIZE, TROOP_ICON_SIZE))
                     surf.blit(scaled, (0, 0))
-                    # 阵营色调叠加（半透明着色）
-                    tint = pygame.Surface((TROOP_ICON_SIZE, TROOP_ICON_SIZE), pygame.SRCALPHA)
-                    tint.fill((*color, 60))
-                    surf.blit(tint, (0, 0))
+                    # 底部阵营色条
+                    bar_h = max(3, TROOP_ICON_SIZE // 10)
+                    bar = pygame.Surface((TROOP_ICON_SIZE, bar_h), pygame.SRCALPHA)
+                    bar.fill((*color, 210))
+                    surf.blit(bar, (0, TROOP_ICON_SIZE - bar_h))
+                    # 底部高光线
+                    hl = pygame.Surface((TROOP_ICON_SIZE, 1), pygame.SRCALPHA)
+                    hl.fill((255, 255, 255, 120))
+                    surf.blit(hl, (0, TROOP_ICON_SIZE - bar_h - 1))
                 else:
                     # 几何回退（传入 style_id 以支持扩展兵种文字占位符）
                     draw_troop_icon(surf, TROOP_ICON_SIZE // 2, TROOP_ICON_SIZE // 2,

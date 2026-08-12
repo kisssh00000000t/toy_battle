@@ -19,34 +19,10 @@ from .styles_registry import get_all_styles, get_style_name
 from .render_cache import refresh_troop_cache
 from .asset_loader import get_troop_img_by_style, get_terrain_img
 from .ui_utils import draw_alpha_rect
+from game.config import is_expansion_enabled, set_expansion_enabled
 from game.constants import TROOP_DATA, TERRAIN_DATA
 
 logger = logging.getLogger(__name__)
-
-# ═══════════════════════════════════════════════════════════
-#  拓展包开关持久化（JSON 文件读写）
-# ═══════════════════════════════════════════════════════════
-EXP_CONFIG_PATH = Path(__file__).parent.parent / "expansion_config.json"
-
-
-def is_expansion_enabled() -> bool:
-    """读取拓展包开关状态，默认关闭。"""
-    try:
-        if EXP_CONFIG_PATH.exists():
-            with open(EXP_CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f).get("enabled", False)
-    except Exception:
-        pass
-    return False
-
-
-def set_expansion_enabled(enabled: bool) -> None:
-    """持久化拓展包开关状态。"""
-    try:
-        with open(EXP_CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump({"enabled": enabled}, f)
-    except Exception:
-        pass
 
 _STYLE_BUTTON_COLORS = [
     TOY_COLORS["primary_yellow"], TOY_COLORS["soft_purple"],

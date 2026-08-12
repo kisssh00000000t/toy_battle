@@ -41,7 +41,7 @@ class GameCommand:
     确保跨端可复现、可校验、可追溯。
 
     Attributes:
-        action_type: 指令类型 (DRAW_CARD | PLAY_PIECE | END_TURN | SYNC_INIT)
+        action_type: 指令类型 (DRAW_CARD | PLAY_PIECE | END_TURN | SELECT_TARGET | SYNC_INIT)
         source_player: 发起方 ID: 'red', 'blue' 或 'system'
         payload: 指令具体参数（必须严格确切，不允许传模糊参考）
         seq_id: 严格递增序列号（本地创建默认 -1，由 Dispatcher 赋值）
@@ -53,7 +53,7 @@ class GameCommand:
                  payload: Optional[Dict[str, Any]] = None,
                  seq_id: int = -1,
                  random_seed: Optional[int] = None):
-        self.action_type = action_type        # DRAW_CARD | PLAY_PIECE | END_TURN | SYNC_INIT
+        self.action_type = action_type        # DRAW_CARD | PLAY_PIECE | END_TURN | SELECT_TARGET | SYNC_INIT
         self.source_player = source_player    # "red" | "blue" | "system"
         self.payload = payload or {}          # 参数 (如 {"troop_key": 3, "node_id": 14})
         self.seq_id = seq_id                  # 严格递增序列号
@@ -115,6 +115,14 @@ class DeterministicRNG:
 
     def choice(self, lst: list) -> Any:
         return self._rng.choice(lst)
+
+    def random(self) -> float:
+        """返回 [0.0, 1.0) 区间随机浮点数（等同于 random.random()）。"""
+        return self._rng.random()
+
+    def sample(self, population: list, k: int) -> list:
+        """从 population 中无放回抽取 k 个元素。"""
+        return self._rng.sample(population, k)
 
     def to_dict(self) -> dict:
         return {"seed": self.seed, "state": self._rng.getstate()}

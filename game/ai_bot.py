@@ -79,26 +79,44 @@ class AIBot:
             - {"type": "draw"} — 抽卡
             - {"type": "place", "troop_key": int, "target_nid": int} — 放置
             - {"type": "end_turn"} — 结束回合
+            - {"type": "select", "option_id": ...} — 处理 pending_selection
+            - {"type": "cast_skill", "target_nid": ...} — 释放二段技能
         """
+        # ── 0a. 处理玩家选择（AI自动选第一个或跳过） ──
+        if getattr(game, "pending_selection", None):
+            sel = game.pending_selection
+            if sel.get("cancellable"):
+                return {"type": "select", "option_id": None}
+            options = sel.get("options", [])
+            if options:
+                return {"type": "select", "option_id": options[0]["id"]}
+            return {"type": "select", "option_id": None}
+
         player = game.red if self.player_color == "red" else game.blue
         opponent_color = "blue" if self.player_color == "red" else "red"
 
-        # ── 0. 优先处理挂起的二段技能（防死锁） ──
+        # ── 0b. 优先处理挂起的二段技能（防死锁） ──
         pending = getattr(game, 'pending_skill', None)
         if pending:
+            t_key = pending["troop_key"]
+            src_nid = pending["source_nid"]
             valid_targets = game.get_skill_target_nodes()
             if valid_targets:
-                # 贪心选取目标：优先选择上面有最多敌军战力的节点
+                # 评估每个目标的价值
                 best_target = None
-                best_val = -1
+                best_score = -1
                 for tgt in valid_targets:
-                    val = sum(t.troop_key if isinstance(t.troop_key, int) else 0 
-                              for t in tgt.stack if t.owner == opponent_color)
-                    if val > best_val:
-                        best_val = val
+                    s = 0
+                    if tgt.top_troop:
+                        s += (tgt.top_troop.number or 0) * 20
+                        # 装甲车(13)高价值目标
+                        if tgt.top_troop.troop_key == 13:
+                            s += 100
+                    if s > best_score:
+                        best_score = s
                         best_target = tgt
-                
-                target_nid = best_target.nid if best_target else random.choice(valid_targets).nid
+
+                target_nid = best_target.nid if best_target else valid_targets[0].nid
                 return {"type": "cast_skill", "target_nid": target_nid}
             else:
                 # 没有任何合法目标时，发送 None 主动跳过技能
@@ -169,9 +187,12 @@ class AIBot:
 
         # ── 3. 重装骑士群攻 ──
         if troop.troop_key == 3:  # 重装骑士（key==3）
-            enemy_count = sum(1 for t in node.stack if t.owner == opponent_color)
-            if enemy_count > 0:
-                score += self.w_knight * enemy_count
+            # 修复：数相邻节点的敌军，而非目标节点堆叠
+            neighbor_ids = game.board.get_neighbors(node.nid)
+            for nb_nid in neighbor_ids:
+                nb = game.board.get_node(nb_nid)
+                if nb and nb.top_troop and nb.top_troop.owner == opponent_color:
+                    score += self.w_knight
 
         # ── 4. 数值覆盖 ──
         enemy_power = sum(t.troop_key if isinstance(t.troop_key, int) else 0
@@ -182,9 +203,24 @@ class AIBot:
 
         # ── 5. 地形要冲 ──
         # 连接数多的节点是战略要冲
-        neighbor_count = len(node.neighbors) if hasattr(node, 'neighbors') else 0
+        neighbor_count = len(game.board.get_neighbors(node.nid))
         if neighbor_count >= 3:
             score += self.w_terrain
+
+        # ── 6. 地形加成 ──
+        terrain = node.terrain_key
+        cp = game.current_player
+        opp = game.opponent
+        if terrain == "city_of_clouds":
+            score += 40
+        elif terrain == "castle_field":
+            score += 30
+        elif terrain == "cursed_cemetery" and cp.discard:
+            score += 35
+        elif terrain == "battlefield" and opp.hand:
+            score += 25
+        elif terrain == "station_metalx":
+            score -= 20
 
         return score
 

@@ -7,7 +7,7 @@
       "terrain": "normal",
       "is_hq": true,
       "hq_owner": "red",
-      "area_id": 0
+      "area_id": 1
     },
     {
       "nid": 1,
@@ -16,7 +16,7 @@
       "terrain": "normal",
       "is_hq": true,
       "hq_owner": "blue",
-      "area_id": 0
+      "area_id": 4
     },
     {
       "nid": 2,
@@ -25,7 +25,7 @@
       "terrain": "station_metalx",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 1
     },
     {
       "nid": 3,
@@ -34,7 +34,7 @@
       "terrain": "normal",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 1
     },
     {
       "nid": 4,
@@ -43,7 +43,7 @@
       "terrain": "normal",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 2
     },
     {
       "nid": 5,
@@ -52,7 +52,7 @@
       "terrain": "tropical_pool",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 3
     },
     {
       "nid": 6,
@@ -61,7 +61,7 @@
       "terrain": "tropical_pool",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 3
     },
     {
       "nid": 7,
@@ -70,7 +70,7 @@
       "terrain": "volcanic_jungle",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 4
     },
     {
       "nid": 8,
@@ -79,7 +79,7 @@
       "terrain": "caribbean_sea",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 4
     },
     {
       "nid": 9,
@@ -88,7 +88,7 @@
       "terrain": "normal",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 3
     },
     {
       "nid": 10,
@@ -97,7 +97,7 @@
       "terrain": "normal",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 3
     },
     {
       "nid": 11,
@@ -106,7 +106,7 @@
       "terrain": "normal",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 1
     },
     {
       "nid": 12,
@@ -115,7 +115,7 @@
       "terrain": "normal",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 2
     },
     {
       "nid": 13,
@@ -124,7 +124,7 @@
       "terrain": "battlefield",
       "is_hq": false,
       "hq_owner": null,
-      "area_id": 0
+      "area_id": 2
     }
   ],
   "edges": [

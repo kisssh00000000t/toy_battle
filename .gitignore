@@ -19,8 +19,12 @@ assets/cache/
 
 # Build
 *.spec
+*.exe
 build/
 dist/
+
+# Replays
+replays/
 
 # OS
 Thumbs.db

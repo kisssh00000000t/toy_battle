@@ -11,6 +11,7 @@
 """
 
 import random
+from .commands import DeterministicRNG
 from .board import GameBoard
 from .player import Player
 from .troop import Troop
@@ -49,6 +50,13 @@ class GameState:
         self.first_player: str | None = None
         # 拓展包二段技能挂起状态（推土/磁铁/魔方/弩手等需要二次选目标）
         self.pending_skill: dict | None = None
+        # 确定性随机数生成器
+        self.rng: DeterministicRNG | None = None
+        self.rng_seed: int | None = None
+        # pending_selection: 玩家选择挂起（回收/召回/封印/回旋等）
+        self.pending_selection: dict | None = None
+        # _placement_ctx: 放置效果链上下文
+        self._placement_ctx: dict | None = None
 
     @property
     def current_player(self) -> Player:
@@ -63,32 +71,34 @@ class GameState:
         """
         return self.blue if self.current_player_color == "red" else self.red
 
-    def setup(self) -> None:
+    def setup(self, seed=None) -> None:
         """初始化游戏：洗牌、决定先手、抽初始手牌。
 
         拓展包增强：根据设置界面的开关决定是否将 8~17 号兵种加入牌池。
         """
-        # 检查拓展包开关（延迟导入避免循环依赖）
-        try:
-            from ui.settings_screen import is_expansion_enabled
-            exp_on = is_expansion_enabled()
-        except Exception:
-            exp_on = False
+        from .config import is_expansion_enabled
+        if seed is None:
+            import random as _random
+            seed = _random.randint(0, 2 ** 31 - 1)
+        self.rng_seed = seed
+        self.rng = DeterministicRNG(seed)
 
-        # 基础兵池：joker + 1~7
-        pool_keys = ["joker"] + list(range(1, 8))
-        # 拓展包开启时追加 8~17
-        if exp_on:
-            pool_keys.extend(range(8, 18))
+        self.red.reset()
+        self.blue.reset()
 
-        self.red.setup_troops(troop_keys=pool_keys)
-        self.blue.setup_troops(troop_keys=pool_keys)
-        # 保存初始牌堆顺序（用于确定性回放）
+        pool_keys = ["joker", 1, 2, 3, 4, 5, 6, 7]
+        if is_expansion_enabled():
+            pool_keys.extend([8, 9, 10, 11, 12, 13, 14, 15, 16, 17])
+
+        self.red.setup_troops(troop_keys=pool_keys, rng=self.rng)
+        self.blue.setup_troops(troop_keys=pool_keys, rng=self.rng)
+
         self.initial_decks = {
             "red": [t.troop_key for t in self.red.reserve],
             "blue": [t.troop_key for t in self.blue.reserve],
         }
-        if random.random() > 0.5:
+
+        if self.rng.random() > 0.5:
             self.current_player_color = "red"
             self.red.init_draw(True)
             self.blue.init_draw(False)
@@ -96,8 +106,13 @@ class GameState:
             self.current_player_color = "blue"
             self.blue.init_draw(True)
             self.red.init_draw(False)
+
         self.first_player = self.current_player_color
-        self.turn_msg = f"先手：{self.current_player_color.upper()}"
+        self.game_over = False
+        self.winner = None
+        self.turn_count = 0
+        self.action_log = []
+        self.turn_msg = "对局开始！"
 
     def draw_cards_action(self) -> tuple[bool, str]:
         """抽卡动作。
@@ -118,7 +133,6 @@ class GameState:
         got = cp.draw(draw_num)
         # FIX: 原代码 draw 返回值未使用，现在记录实际抽取数
         self.turn_msg = f"抽取{got}张卡牌"
-        self._log_action("draw", {"player": cp.color, "count": got})
         self.end_turn()
         return True, ""
 
@@ -149,10 +163,10 @@ class GameState:
         # 拓展包：禁锢胶水地形不可放置任何兵种
         if node.terrain_key == "mud":
             return False, "泥沼地形不可放置兵种"
-        # troop_4（锡兵狙击手）禁止直接手牌投放敌方基地
+        # 飞钩船长(4)禁止直接放置在敌方HQ（可通过连通推进占领）
         if troop.troop_key == 4:
             if node.is_hq and node.hq_owner is not None and node.hq_owner != self.current_player.color:
-                return False, "锡兵狙击手不能直接投放敌方基地，可以通过移动攻占！"
+                return False, "飞钩船长不能直接放置敌方基地，可以通过移动占领！"
         # 禁止在己方HQ放置棋子
         if node.is_hq and node.hq_owner == self.current_player.color:
             return False, "不能在己方总部放置棋子"
@@ -228,11 +242,6 @@ class GameState:
         # 放入节点堆叠
         node.stack.append(troop)
         cp.hand.remove(troop)
-        self._log_action("place", {
-            "player": cp.color, "troop": str(troop),
-            "troop_key": troop.troop_key,
-            "node": node.nid, "terrain": node.terrain_key
-        })
         # 即时胜利：占领敌方HQ
         if node.is_hq and node.hq_owner != cp.color:
             self.winner = cp.color
@@ -246,8 +255,8 @@ class GameState:
         t_key = troop.troop_key
 
         # ── 拓展包瞬发技能 ──
-        # 爆竹车(16)：放置后消灭所有相邻敌方兵种，随后自身摧毁
-        if t_key == 16:
+        # ── 16号爆弹邦邦：自毁（金属X站不触发兵效）──
+        if t_key == 16 and node.terrain_key != "station_metalx":
             destroyed = 0
             for nb_nid in self.board.get_neighbors(node.nid):
                 nb = self.board.get_node(nb_nid)
@@ -255,55 +264,41 @@ class GameState:
                     self._destroy_troop(nb.top_troop, nb)
                     destroyed += 1
             node.stack.remove(troop)
-            self.turn_msg = f"爆竹车自毁，带走了周边 {destroyed} 个敌军！"
-            self._check_star_score()
-            self.end_turn()
-            return True
+            cp.discard.append(troop)
+            troop.is_facedown = True
+            self.turn_msg = f"爆弹邦邦自毁，带走了周边 {destroyed} 个敌军！"
 
-        # 溜溜球(12)：消灭敌军后自身回到手牌，该节点变为空地
-        if t_key == 12 and old_top and old_top.owner != cp.color:
-            node.stack.remove(troop)
-            cp.hand.append(troop)
-            troop.is_facedown = False
-            self.turn_msg = "溜溜球完成回旋打击，已返回手牌！"
-            self._check_star_score()
-            self.end_turn()
-            return True
+        # ── 12号回旋闪回：选择相邻敌军消灭后回手 ──
+        if t_key == 12:
+            adj_enemies = []
+            for nb_nid in self.board.get_neighbors(node.nid):
+                nb = self.board.get_node(nb_nid)
+                if nb and nb.top_troop and nb.top_troop.owner != cp.color:
+                    adj_enemies.append(nb)
+            if adj_enemies:
+                self._placement_ctx = {"troop": troop, "node": node, "phase": "yoyo"}
+                self.pending_selection = {
+                    "type": "yoyo_target",
+                    "options": [{"id": nb.nid, "label": f"节点{nb.nid}"} for nb in adj_enemies],
+                    "cancellable": False,
+                }
+                self.turn_msg = "回旋闪回：选择要消灭的相邻敌军"
+                return True
 
-        # ── 拓展包挂起二段技能 ──
-        # 推土(8)/磁铁(9)/魔方(10)/弩手(11) 进入"待选择目标"状态
+        # ── 二阶段技能兵种 ──
         if t_key in (8, 9, 10, 11):
-            self.pending_skill = {
-                "troop_key": t_key,
-                "source_nid": node.nid
-            }
-            self.turn_msg = f"已就位，请点击选择 {troop.name} 的技能目标节点！"
-            # 不调用 end_turn()，保留当前玩家回合等待二段操作
+            self.pending_skill = {"troop_key": t_key, "source_nid": node.nid}
+            if self.extra_place_pending:
+                self.extra_place_pending = False
+            self.turn_msg = f"请选择 {troop.name} 的技能目标（右键跳过）"
             return True
 
-        # 金属X站：跳过兵种效果
-        skip_troop_effect = (node.terrain_key == "station_metalx")
-        if not skip_troop_effect:
-            self._run_troop_effect(troop, node)
-        # 执行地形效果
-        self._run_terrain_effect(troop, node)
-        # 星星计分判定
-        if self._check_star_score():
+        # ── 正常流程：兵效 → 地效 → 结算 ──
+        self._placement_ctx = {"troop": troop, "node": node, "phase": "troop_effect"}
+        self._run_troop_effect(troop, node)
+        if self.pending_selection:
             return True
-        # 星星胜利判定
-        if cp.star_points >= self.star_win_goal:
-            self.winner = cp.color
-            self.game_over = True
-            self.turn_msg = f"{cp.color.upper()}集齐{self.star_win_goal}颗星星，获胜！"
-            return True
-        # 玩具队长额外放置标记（不自动结束回合）
-        if troop.troop_key == 2 and not self.extra_place_pending:
-            if len(cp.hand) > 0:
-                self.extra_place_pending = True
-                self.turn_msg += "｜玩具队长：可再放置一张"
-        elif self.extra_place_pending:
-            self.extra_place_pending = False
-        # 不自动结束回合，由 UI 手动确认
+        self._continue_placement()
         return True
 
     def _destroy_troop(self, troop: Troop, node) -> None:
@@ -319,6 +314,47 @@ class GameState:
         owner = self.red if troop.owner == "red" else self.blue
         troop.is_facedown = True
         owner.discard.append(troop)
+
+    def _continue_placement(self):
+        """选择完成后继续放置效果链。"""
+        ctx = self._placement_ctx
+        if not ctx or self.pending_selection:
+            return
+        troop = ctx["troop"]
+        node = ctx["node"]
+        phase = ctx["phase"]
+
+        if phase in ("troop_effect", "yoyo"):
+            ctx["phase"] = "terrain_effect"
+            self._run_terrain_effect(troop, node)
+            if self.pending_selection:
+                return
+            self._finalize_placement(troop, node)
+        elif phase == "terrain_effect":
+            self._finalize_placement(troop, node)
+
+    def _finalize_placement(self, troop, node):
+        """星数检查 + 队长额外放置（支持链式）。"""
+        cp = self.current_player
+        self._placement_ctx = None
+
+        if self._check_star_score():
+            return
+        if cp.star_points >= self.star_win_goal:
+            self.winner = cp.color
+            self.game_over = True
+            self.turn_msg = f"{cp.color.upper()} 方集齐 {self.star_win_goal} 颗星星，获胜！"
+            return
+
+        # 队长链：每次放队长都获得extra；非队长且extra为True时清除
+        if troop.troop_key == 2:
+            if len(cp.hand) > 0:
+                self.extra_place_pending = True
+                self.turn_msg += "｜玩具队长：可再放置一张"
+            else:
+                self.extra_place_pending = False
+        elif self.extra_place_pending:
+            self.extra_place_pending = False
 
     # ========== 拓展包：动态战力与覆灭判定 ==========
 
@@ -343,12 +379,12 @@ class GameState:
         合金装甲车 (ID:13) 只能被基础战力 >7 的单位正面覆盖，
         且免疫推拉类位移技能。
         """
+        # Joker 互覆规则（优先于装甲车判定）
+        if attacker_troop.troop_key == "joker" or defender_troop.troop_key == "joker":
+            return True
         # 合金装甲车叹息之墙特判
         if defender_troop.troop_key == 13:
             return (attacker_troop.number if attacker_troop.number else 0) > 7
-        # Joker 互覆规则
-        if attacker_troop.troop_key == "joker" or defender_troop.troop_key == "joker":
-            return True
         att_power = self._get_combat_power(attacker_troop, def_node)
         def_power = self._get_combat_power(defender_troop, def_node)
         return att_power > def_power
@@ -388,61 +424,58 @@ class GameState:
             dy1 = node_dir.y - node_start.y
             dx2 = cand.x - node_dir.x
             dy2 = cand.y - node_dir.y
-            # 点积为正（同向）且叉积极小（共线）
-            if dx1 * dx2 + dy1 * dy2 > 0 and abs(dx1 * dy2 - dy1 * dx2) < 500:
+            dot = dx1 * dx2 + dy1 * dy2
+            cross = abs(dx1 * dy2 - dy1 * dx2)
+            len1 = (dx1 * dx1 + dy1 * dy1) ** 0.5
+            len2 = (dx2 * dx2 + dy2 * dy2) ** 0.5
+            if dot > 0 and len1 > 0 and len2 > 0 and cross < 0.05 * len1 * len2:
                 return cand
         return None
 
     def _run_troop_effect(self, troop: Troop, node) -> None:
         """执行兵种特殊效果。
 
-        FIX: 原代码 opp = self.turn_msg → opp = self.opponent
-        FIX: 原代码 self._destroy(t, nd) → self._destroy_troop(t, nd)
-
         Args:
             troop: 刚放置的兵种
             node: 放置目标节点
         """
+        if node.terrain_key == "station_metalx":
+            return
         cp = self.current_player
-        # FIX: 原代码 opp = self.turn_msg（字符串），应为对手玩家对象
         opp = self.opponent
         key = troop.troop_key
         if key == 1:
-            # 小骷髅：放置后抽卡
-            cnt = 2 if len(cp.hand) <= 6 else 1
-            got = cp.draw(cnt)
-            # FIX: 原代码 draw 返回值未使用
-            self.turn_msg = f"小骷髅抽{got}张"
+            n = 2 if len(cp.hand) < 7 else 1
+            drawn = 0
+            for _ in range(n):
+                if cp.draw(1):
+                    drawn += 1
+            if drawn > 0:
+                self.turn_msg += f"｜小骷髅：抽了{drawn}张牌"
         elif key == 3:
-            # 重装骑士：清除相邻敌方顶层单位
-            clear = 0
-            for nid in self.board.get_neighbors(node.nid):
-                nd = self.board.get_node(nid)
-                if nd is None:
-                    continue
-                t = nd.top_troop
-                if t and t.owner != cp.color:
-                    # FIX: 原代码 self._destroy → self._destroy_troop
-                    self._destroy_troop(t, nd)
-                    clear += 1
-            if clear > 0:
-                self.turn_msg = f"重装骑士清除{clear}敌方单位"
+            destroyed = 0
+            for nb_nid in self.board.get_neighbors(node.nid):
+                nb = self.board.get_node(nb_nid)
+                if nb and nb.top_troop and nb.top_troop.owner != cp.color:
+                    self._destroy_troop(nb.top_troop, nb)
+                    destroyed += 1
+            if destroyed > 0:
+                self.turn_msg += f"｜重装骑士：清除了{destroyed}个相邻敌军"
         elif key == 5:
-            # XB-42：随机弃置对手一张手牌
-            if len(opp.hand) > 0:
-                tar = random.choice(opp.hand)
-                opp.discard_troop(tar)
-                self.turn_msg = f"XB42弃置{tar.alias}"
+            if opp.hand:
+                t = self.rng.choice(opp.hand) if self.rng else random.choice(opp.hand)
+                opp.discard_troop(t)
+                self.turn_msg += f"｜XB-42：弃掉了对手一张手牌"
         elif key == 6:
-            # 独角兽星耀：从弃牌堆回收一张
-            if len(cp.discard) > 0:
-                t = cp.discard.pop()
-                if len(cp.hand) < HAND_MAX:
-                    cp.return_to_hand(t)
-                    self.turn_msg = f"独角兽回收{t.alias}"
-                else:
-                    cp.discard.append(t)
-                    self.turn_msg = "手牌满无法回收"
+            if cp.discard and len(cp.hand) < HAND_MAX:
+                self.pending_selection = {
+                    "type": "recover_discard",
+                    "options": [{"id": t.roster_id, "label": t.alias} for t in cp.discard],
+                    "cancellable": True,
+                }
+                self.turn_msg += "｜选择要从弃牌堆回收的兵种"
+            elif cp.discard:
+                self.turn_msg += "｜手牌已满，无法回收"
 
     def _get_adjacent_nodes(self, node):
         """返回与给定节点通过单条路径相连的所有节点ID。"""
@@ -472,17 +505,16 @@ class GameState:
             for nd in self.board.nodes.values():
                 top = nd.top_troop
                 if top and top.owner == cp.color and nd.nid != node.nid:
-                    candidates.append((top, nd))
-            if candidates:
-                chosen_troop, chosen_node = random.choice(candidates)
-                self._remove_troop_from_node(chosen_troop, chosen_node)
-                if len(cp.hand) < HAND_MAX:
-                    cp.hand.append(chosen_troop)
-                    self.turn_msg += f"｜城堡原野召回了{chosen_troop.alias}"
-                else:
-                    # 手牌满，无法召回
-                    chosen_node.stack.append(chosen_troop)
-                    self.turn_msg += "｜城堡原野：手牌满，无法召回"
+                    candidates.append(nd)
+            if candidates and len(cp.hand) < HAND_MAX:
+                self.pending_selection = {
+                    "type": "recall",
+                    "options": [{"id": nd.nid, "label": f"节点{nd.nid}"} for nd in candidates],
+                    "cancellable": True,
+                }
+                self.turn_msg += "｜选择要召回的己方兵种"
+            elif candidates:
+                self.turn_msg += "｜手牌已满，无法召回"
 
         # --- 云之城：从备用牌堆抽1张 ---
         elif ter == "city_of_clouds":
@@ -516,21 +548,25 @@ class GameState:
 
         # --- 诅咒墓地：从己方弃牌堆回收1枚兵种 ---
         elif ter == "cursed_cemetery":
-            if cp.discard:
-                recovered = cp.discard.pop()
-                if len(cp.hand) < HAND_MAX:
-                    cp.hand.append(recovered)
-                    self.turn_msg += f"｜诅咒墓地回收了{recovered.alias}"
-                else:
-                    cp.discard.append(recovered)
-                    self.turn_msg += "｜诅咒墓地：手牌满，无法回收"
+            if cp.discard and len(cp.hand) < HAND_MAX:
+                self.pending_selection = {
+                    "type": "recover_discard",
+                    "options": [{"id": t.roster_id, "label": t.alias} for t in cp.discard],
+                    "cancellable": True,
+                }
+                self.turn_msg += "｜选择要从弃牌堆回收的兵种"
+            elif cp.discard:
+                self.turn_msg += "｜手牌已满，无法回收"
 
         # --- 战场：封印敌方1张手牌 ---
         elif ter == "battlefield":
             if opp.hand and opp.sealed_troop is None:
-                target = random.choice(opp.hand)
-                opp.seal_troop(target)
-                self.turn_msg += f"｜战场封印了{target.alias}"
+                self.pending_selection = {
+                    "type": "seal",
+                    "options": [{"id": i, "label": f"手牌{i+1}"} for i in range(len(opp.hand))],
+                    "cancellable": False,
+                }
+                self.turn_msg += "｜选择要封印的敌方手牌"
 
         # 热带泳池：放置限制已在 can_place_troop 中处理
         # 金属X站：兵种效果跳过已在 place_troop 中处理
@@ -566,6 +602,87 @@ class GameState:
                     return True
         return False
 
+    def resolve_selection(self, option_id) -> tuple:
+        """处理玩家选择，继续效果链。"""
+        if not self.pending_selection:
+            return False, "当前无待选择项目"
+        sel = self.pending_selection
+        sel_type = sel["type"]
+        cp = self.current_player
+
+        # 取消/跳过
+        if option_id is None:
+            if not sel.get("cancellable", False):
+                return False, "此选择必须执行"
+            self.pending_selection = None
+            self.turn_msg += "｜已跳过"
+            self._continue_placement()
+            return True, "已跳过"
+
+        if sel_type == "yoyo_target":
+            nid = int(option_id)
+            tgt = self.board.get_node(nid)
+            if not tgt or not tgt.top_troop or tgt.top_troop.owner == cp.color:
+                return False, "无效目标"
+            enemy = tgt.top_troop
+            self._destroy_troop(enemy, tgt)
+            ctx = self._placement_ctx
+            troop12 = ctx["troop"]
+            src_node = ctx["node"]
+            src_node.stack.remove(troop12)
+            cp.hand.append(troop12)
+            troop12.is_facedown = False
+            self.turn_msg = f"回旋闪回消灭了{enemy.alias}，已回到手牌！"
+            self.pending_selection = None
+            self._continue_placement()
+            return True, self.turn_msg
+
+        elif sel_type == "recover_discard":
+            target = None
+            for t in cp.discard:
+                if t.roster_id == option_id:
+                    target = t
+                    break
+            if not target:
+                return False, "弃牌堆中无此兵种"
+            if len(cp.hand) >= HAND_MAX:
+                return False, "手牌已满"
+            cp.return_to_hand(target)
+            self.turn_msg += f"｜回收了{target.alias}"
+            self.pending_selection = None
+            self._continue_placement()
+            return True, self.turn_msg
+
+        elif sel_type == "recall":
+            nid = int(option_id)
+            src = self.board.get_node(nid)
+            if not src or not src.top_troop or src.top_troop.owner != cp.color:
+                return False, "无效目标"
+            if len(cp.hand) >= HAND_MAX:
+                return False, "手牌已满"
+            recalled = src.top_troop
+            self._remove_troop_from_node(recalled, src)
+            cp.hand.append(recalled)
+            recalled.is_facedown = False
+            self.turn_msg += f"｜召回了{recalled.alias}"
+            self.pending_selection = None
+            self._continue_placement()
+            return True, self.turn_msg
+
+        elif sel_type == "seal":
+            opp = self.opponent
+            idx = int(option_id)
+            if idx < 0 or idx >= len(opp.hand):
+                return False, "无效手牌位置"
+            sealed = opp.hand[idx]
+            opp.seal_troop(sealed)
+            self.turn_msg += f"｜战场封印了对手一张手牌"
+            self.pending_selection = None
+            self._continue_placement()
+            return True, self.turn_msg
+
+        return False, "未知选择类型"
+
     def execute_pending_skill(self, target_nid: int | None = None) -> tuple[bool, str]:
         """结算二段指向性技能（推土、磁铁、魔方、弩手）。
 
@@ -584,8 +701,7 @@ class GameState:
         if target_nid is None:
             self.pending_skill = None
             self.turn_msg = "已跳过技能"
-            if not getattr(self, 'extra_place_pending', False):
-                self.end_turn()
+            self.end_turn()
             return True, "已跳过技能"
 
         t_key = self.pending_skill["troop_key"]
@@ -622,20 +738,17 @@ class GameState:
                 self._destroy_troop(enemy, tgt_node)
                 self.turn_msg = "后方已无退路，敌方被推土机碾碎！"
 
-        elif t_key == 9:  # 磁铁钓鱼竿 — 牵引
-            # 将距离2格内的敌军拉近1格：移动到源节点的某个空邻居
-            pull_candidates = []
-            for nb_nid in self.board.get_neighbors(src_node.nid):
-                nb = self.board.get_node(nb_nid)
-                if nb and nb.top_troop is None and nb.nid != tgt_node.nid:
-                    pull_candidates.append(nb)
-            if pull_candidates:
-                tgt_node.stack.remove(enemy)
-                dest = pull_candidates[0]
-                dest.stack.append(enemy)
-                self.turn_msg = f"磁铁钓鱼竿将敌方牵引到了节点{dest.nid}！"
-            else:
-                self.turn_msg = "磁铁牵引失败：源节点周围无空位！"
+        elif t_key == 9:  # 磁钩麦格：牵引到中间节点
+            if enemy.troop_key == 13:
+                return False, "铁甲布鲁特免疫牵引"
+            mid = self._find_pull_mid_node(src_node, tgt_node)
+            if mid is None:
+                return False, "目标不在2格牵引范围内"
+            if mid.top_troop is not None:
+                return False, "中间节点被占据，无法牵引"
+            tgt_node.stack.remove(enemy)
+            mid.stack.append(enemy)
+            self.turn_msg = f"磁钩麦格将{enemy.alias}牵引到节点{mid.nid}！"
 
         elif t_key == 10:  # 魔方刺客 — 换位
             assassin = src_node.top_troop
@@ -648,14 +761,15 @@ class GameState:
             else:
                 self.turn_msg = "魔方刺客已不在源节点！"
 
-        elif t_key == 11:  # 弩手 — 穿透射击
-            tgt_node.stack.remove(enemy)
+        elif t_key == 11:  # 弹弩班迪：隔山打牛
+            if not self._is_in_line_of_sight(src_node, tgt_node):
+                return False, "目标不在直线射界内"
             self._destroy_troop(enemy, tgt_node)
-            self.turn_msg = "弩手一发入魂，远程点杀敌军！"
+            self.turn_msg = f"弹弩班迪隔山打牛，消灭了{enemy.alias}！"
 
         self.pending_skill = None
-        # 二段技能后检查星星计分
-        self._check_star_score()
+        if self._check_star_score():
+            return True, "技能结算完毕"
         self.end_turn()
         return True, "技能结算完毕"
 
@@ -674,6 +788,8 @@ class GameState:
 
     def _check_game_end(self) -> None:
         """检查游戏是否因无操作可行而结束。"""
+        if self.game_over:
+            return
         cp = self.current_player
         no_draw = not cp.can_draw()
         no_place = True
@@ -685,14 +801,35 @@ class GameState:
                     break
             if not no_place:
                 break
-        if no_draw and no_place:
-            self.game_over = True
-            if self.red.star_points != self.blue.star_points:
-                self.winner = "red" if self.red.star_points > self.blue.star_points else "blue"
-            else:
-                # 星星相同，当前行动方失败
-                self.winner = "blue" if self.current_player_color == "red" else "red"
-            self.turn_msg = f"无操作可行，{self.winner.upper()}胜利"
+
+        both_reserves_empty = not self.red.reserve and not self.blue.reserve
+
+        if (no_draw and no_place) or both_reserves_empty:
+            self._settle_game()
+
+    def _settle_game(self):
+        """终局结算：比勋章 → 比剩余牌数 → 比场上兵力。"""
+        self.game_over = True
+        if self.red.star_points != self.blue.star_points:
+            self.winner = "red" if self.red.star_points > self.blue.star_points else "blue"
+            self.turn_msg = f"双方无牌可出，{self.winner.upper()}方勋章更多，获胜！"
+            return
+        red_cards = len(self.red.reserve) + len(self.red.hand)
+        blue_cards = len(self.blue.reserve) + len(self.blue.hand)
+        if red_cards != blue_cards:
+            self.winner = "red" if red_cards > blue_cards else "blue"
+            self.turn_msg = f"勋章相同，{self.winner.upper()}方剩余牌更多，获胜！"
+            return
+        red_board = sum(1 for nd in self.board.nodes.values()
+                        if nd.top_troop and nd.top_troop.owner == "red")
+        blue_board = sum(1 for nd in self.board.nodes.values()
+                         if nd.top_troop and nd.top_troop.owner == "blue")
+        if red_board != blue_board:
+            self.winner = "red" if red_board > blue_board else "blue"
+            self.turn_msg = f"牌数相同，{self.winner.upper()}方场上兵力更多，获胜！"
+            return
+        self.winner = None
+        self.turn_msg = "双方势均力敌，平局！"
 
     def _log_action(self, action_type: str, data: dict) -> None:
         """记录操作日志（用于回放功能）。"""
@@ -748,17 +885,22 @@ class GameState:
             if t_key == 8:
                 if nid in self.board.get_neighbors(src_nid):
                     targets.append(nd)
-            # 磁铁(9)：目标在2步范围内
+            # 磁钩麦格(9)：目标距离恰好2（中间节点须空）
             elif t_key == 9:
-                if self._is_within_range(src_nid, nid, max_dist=2):
+                if nd.top_troop.troop_key == 13:
+                    continue
+                src_node = self.board.get_node(src_nid)
+                mid = self._find_pull_mid_node(src_node, nd)
+                if mid is not None:
                     targets.append(nd)
             # 魔方刺客(10)：目标必须与源节点相邻
             elif t_key == 10:
                 if nid in self.board.get_neighbors(src_nid):
                     targets.append(nd)
-            # 弩手(11)：目标在2步范围内（无视连线中间障碍）
+            # 弹弩班迪(11)：直线射界（中间须有棋子）
             elif t_key == 11:
-                if self._is_within_range(src_nid, nid, max_dist=2):
+                src_node = self.board.get_node(src_nid)
+                if self._is_in_line_of_sight(src_node, nd):
                     targets.append(nd)
         return targets
 
@@ -790,46 +932,80 @@ class GameState:
                     return True
         return False
 
+    def _find_pull_mid_node(self, src_node, tgt_node):
+        """BFS找src→tgt最短路径上的中间节点（距离恰好2）。"""
+        from collections import deque
+        parents = {src_node.nid: None}
+        q = deque([(src_node.nid, 0)])
+        while q:
+            cur, dist = q.popleft()
+            if cur == tgt_node.nid:
+                if dist == 2:
+                    return self.board.get_node(parents[tgt_node.nid])
+                return None
+            if dist >= 2:
+                continue
+            for nb in self.board.get_neighbors(cur):
+                if nb not in parents:
+                    parents[nb] = cur
+                    q.append((nb, dist + 1))
+        return None
+
     # ─── 序列化与网络 ────────────────────────────────────────
 
     def to_dict(self) -> dict:
         """完整序列化对局状态（断线重连、存档、网战校验）。"""
+        nodes_stack = {}
+        for nid, node in self.board.nodes.items():
+            nodes_stack[nid] = [t.to_dict() for t in node.stack]
         return {
+            "board": self.board.to_dict(),
+            "nodes_stack": nodes_stack,
             "current_player_color": self.current_player_color,
-            "winner": self.winner,
+            "first_player": getattr(self, "first_player", "red"),
+            "turn_count": getattr(self, "turn_count", 0),
             "game_over": self.game_over,
-            "star_win_goal": self.star_win_goal,
+            "winner": self.winner,
             "extra_place_pending": self.extra_place_pending,
             "turn_place_count": self.turn_place_count,
-            "turn_msg": self.turn_msg,
-            "red_player": self.red.to_dict(),
-            "blue_player": self.blue.to_dict(),
-            "nodes_stack": {
-                str(nid): node.to_dict()["stack"]
-                for nid, node in self.board.nodes.items()
-            },
-            "action_log": self.action_log,
-            "pending_skill": self.pending_skill
+            "pending_skill": self.pending_skill,
+            "pending_selection": self.pending_selection,
+            "red": self.red.to_dict(),
+            "blue": self.blue.to_dict(),
+            "rng_seed": self.rng_seed,
+            "rng_state": self.rng.to_dict() if self.rng else None,
+            "initial_decks": getattr(self, "initial_decks", {}),
         }
 
     def from_dict(self, data: dict) -> None:
         """从快照反序列化重建对局状态。"""
-        self.current_player_color = data["current_player_color"]
-        self.winner = data["winner"]
-        self.game_over = data["game_over"]
-        self.star_win_goal = data["star_win_goal"]
-        self.extra_place_pending = data["extra_place_pending"]
-        self.turn_place_count = data["turn_place_count"]
-        self.turn_msg = data["turn_msg"]
-        self.action_log = data.get("action_log", [])
-        self.pending_skill = data.get("pending_skill")
-        self.red.from_dict(data["red_player"])
-        self.blue.from_dict(data["blue_player"])
-        nodes_stack = data.get("nodes_stack", {})
-        for nid_str, stack_data in nodes_stack.items():
-            node = self.board.get_node(int(nid_str))
+        from .troop import Troop
+        if "board" in data:
+            self.board.load_from_dict(data["board"])
+        else:
+            self.board.load_stack_from_dict(data.get("nodes_stack", {}))
+        # 恢复运行时地形变更（泥沼化）
+        for nid_str, stack_data in data.get("nodes_stack", {}).items():
+            nid = int(nid_str)
+            node = self.board.get_node(nid)
             if node:
-                node.load_stack_from_dict(stack_data)
+                node.stack = [Troop.from_dict(d) for d in stack_data]
+        self.red.from_dict(data["red"])
+        self.blue.from_dict(data["blue"])
+        self.current_player_color = data["current_player_color"]
+        self.first_player = data.get("first_player", "red")
+        self.turn_count = data.get("turn_count", 0)
+        self.game_over = data.get("game_over", False)
+        self.winner = data.get("winner")
+        self.extra_place_pending = data.get("extra_place_pending", False)
+        self.turn_place_count = data.get("turn_place_count", 0)
+        self.pending_skill = data.get("pending_skill")
+        self.pending_selection = data.get("pending_selection")
+        self.initial_decks = data.get("initial_decks", {})
+        rng_state = data.get("rng_state")
+        if rng_state:
+            self.rng = DeterministicRNG.from_dict(rng_state)
+            self.rng_seed = data.get("rng_seed")
 
     def apply_net_action(self, action: dict) -> tuple[bool, str]:
         """接收网络对手的操作 JSON 并执行。

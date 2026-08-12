@@ -95,7 +95,7 @@ class MapGenerator:
                     "terrain": self._pick_terrain(is_hq=is_hq),
                     "is_hq": is_hq,
                     "hq_owner": "red" if c == 0 else ("blue" if c == self.cols - 1 else ""),
-                    "area_id": 1 + (c % 3)  # 战区划分
+                    "area_id": 1 + (c % 4)  # 战区划分
                 }
                 nodes[nid_counter] = nd
                 nodes_by_col[c].append(nd)
@@ -157,7 +157,7 @@ class MapGenerator:
                 "has_star": True
             })
 
-        return {
+        result = {
             "version": "1.0",
             "map_id": map_id,
             "difficulty": difficulty,
@@ -167,6 +167,19 @@ class MapGenerator:
             "edges": [{"u": u, "v": v} for u, v in sorted(edges)],
             "star_points": star_points
         }
+
+        # 公平性评估
+        try:
+            from .map_evaluator import MapEvaluator
+            evaluator = MapEvaluator()
+            report = evaluator.evaluate(result)
+            if not report.get("valid", True):
+                import logging
+                logging.getLogger(__name__).warning(f"地图评估警告: {report}")
+        except Exception:
+            pass
+
+        return result
 
     # ─── 模板派生（兼容旧接口） ────────────────────────────
 

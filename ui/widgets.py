@@ -178,6 +178,18 @@ def get_border_color(terrain_key):
     return get_contrast_border(td.get("color", FALLBACK_GRAY))
 
 
+def draw_drop_shadow(surface, rect, radius=12, offset=(3, 4), alpha=50):
+    """绘制柔和投影。"""
+    pad = 8
+    shadow = pygame.Surface((rect.width + pad * 2, rect.height + pad * 2),
+                            pygame.SRCALPHA)
+    pygame.draw.rect(shadow, (0, 0, 0, alpha),
+                     (pad, pad, rect.width, rect.height),
+                     border_radius=radius)
+    surface.blit(shadow, (rect.x - pad + offset[0],
+                          rect.y - pad + offset[1]))
+
+
 def draw_star_shape(surface, cx, cy, size, fill_color, stroke_color=(0, 0, 0),
                     stroke_width=2, filled=True):
     """绘制纯几何五角星。
@@ -838,14 +850,23 @@ class ToyToggle:
 # ─── 手牌卡片控件 ───────────────────────────────────────────────
 
 class ToyCard:
-    """玩具风格手牌卡片。"""
+    """玩具风格手牌卡片（含名称条、技能角标、战力徽章）。"""
+
+    # 技能类型角标映射
+    SKILL_ICONS = {
+        "joker": "J",
+        1: "抽", 2: "队", 3: "清", 4: "飞", 5: "弃",
+        6: "回", 7: "", 8: "推", 9: "拉", 10: "换",
+        11: "射", 12: "旋", 13: "铁", 14: "泥", 15: "光",
+        16: "爆", 17: "跳",
+    }
 
     def __init__(self, troop, rect, selected=False, player_color_name=None):
         self.troop = troop
         self.rect = pygame.Rect(rect)
         self.selected = selected
         self.hover = False
-        self.player_color_name = player_color_name  # "red" / "blue"
+        self.player_color_name = player_color_name
         self.font_info = get_font(14, style="english")
 
     def handle_event(self, event):
@@ -853,7 +874,6 @@ class ToyCard:
             self.hover = self.rect.collidepoint(event.pos)
 
     def _macaron_border_color(self):
-        """根据阵营返回马卡龙边框色。"""
         from .ui_const import TOY_RED_BORDER, TOY_BLUE_BORDER
         if self.player_color_name == "red":
             return TOY_RED_BORDER
@@ -862,45 +882,105 @@ class ToyCard:
         return TOY_COLORS["dark_text"]
 
     def draw(self, surface, player_color_rgb):
-        # 选中高亮
+        # 选中发光
         if self.selected:
-            glow = self.rect.inflate(8, 8)
-            draw_rounded_rect(surface, (255, 220, 40), glow, radius=10)
+            glow = self.rect.inflate(10, 10)
+            draw_rounded_rect(surface, (255, 220, 40), glow, radius=12)
+            draw_rounded_rect(surface, (255, 240, 120), glow.inflate(-4, -4),
+                              radius=10)
 
-        # 卡片主体
+        # 卡身颜色
         card_color = player_color_rgb
         if self.selected:
             card_color = lighten_color(card_color, 60)
         elif self.hover:
             card_color = lighten_color(card_color, 30)
+
+        # 阴影
+        draw_drop_shadow(surface, self.rect, radius=12, alpha=40)
+
+        # 卡身
         draw_rounded_rect(surface, card_color, self.rect, radius=12)
-
-        # 阵营色边框（马卡龙色调）
         border_col = self._macaron_border_color()
-        pygame.draw.rect(surface, border_col, self.rect, width=2, border_radius=12)
+        pygame.draw.rect(surface, border_col, self.rect, width=2,
+                         border_radius=12)
 
-        # ── 底座（增强图标视觉深度） ──
-        base_radius = self.rect.height // 3
-        base_center = (self.rect.centerx, self.rect.centery + 2)
-        # 底座圆（马卡龙色）
-        base_col = self._macaron_border_color()
-        pygame.draw.circle(surface, base_col, base_center, base_radius)
-        # 底座高光边缘
-        highlight_color = lighten_color(base_col, 40)
-        pygame.draw.circle(surface, highlight_color, base_center, base_radius, 2)
+        # 顶部名称条
+        name_h = 20
+        name_rect = pygame.Rect(self.rect.x, self.rect.y,
+                                self.rect.width, name_h)
+        name_surf = pygame.Surface((name_rect.width, name_h), pygame.SRCALPHA)
+        pygame.draw.rect(name_surf, (0, 0, 0, 110), name_surf.get_rect(),
+                         border_top_left_radius=12,
+                         border_top_right_radius=12)
+        surface.blit(name_surf, name_rect.topleft)
+        name_font = get_font(13, bold=True, style="chinese")
+        name_txt = name_font.render(self.troop.name, True, (255, 255, 255))
+        # 名字过长时截断
+        max_name_w = self.rect.width - 8
+        if name_txt.get_width() > max_name_w:
+            display_len = len(self.troop.name)
+            while name_txt.get_width() > max_name_w and display_len > 1:
+                display_len -= 1
+                name_txt = name_font.render(self.troop.name[:display_len] + "...",
+                                            True, (255, 255, 255))
+        surface.blit(name_txt, (self.rect.centerx - name_txt.get_width() // 2,
+                                self.rect.y + 3))
 
-        # 兵种图标（缓存blit替代文字渲染）
+        # 兵种图标
         from .render_cache import get_cached_troop
         from game.constants import HAND_TROOP_ICON_SIZE
         icon_size = HAND_TROOP_ICON_SIZE
         tro_surf = get_cached_troop(self.troop.troop_key, self.troop.owner,
-                                     target_size=icon_size)
+                                    target_size=icon_size)
         surface.blit(tro_surf, (self.rect.centerx - tro_surf.get_width() // 2,
-                                self.rect.centery - tro_surf.get_height() // 2 - 12))
-        # 战力
+                                self.rect.y + name_h + 2))
+
+        # 左下角战力徽章
         val = str(self.troop.number) if self.troop.number else "J"
-        val_surf = self.font_info.render(val, True, (255, 255, 255))
-        surface.blit(val_surf, (self.rect.x + 4, self.rect.bottom - 18))
+        val_font = get_font(18, bold=True, style="english")
+        val_surf = val_font.render(val, True, (255, 255, 255))
+        val_cx = self.rect.x + 15
+        val_cy = self.rect.bottom - 14
+        pygame.draw.circle(surface, (60, 50, 40), (val_cx, val_cy), 12)
+        pygame.draw.circle(surface, (255, 220, 100), (val_cx, val_cy), 12, 2)
+        surface.blit(val_surf, (val_cx - val_surf.get_width() // 2,
+                                val_cy - val_surf.get_height() // 2))
+
+        # 右下角技能角标
+        skill_icon = self.SKILL_ICONS.get(self.troop.troop_key, "")
+        if skill_icon:
+            sx = self.rect.right - 15
+            sy = self.rect.bottom - 14
+            pygame.draw.circle(surface, (255, 255, 255), (sx, sy), 11)
+            pygame.draw.circle(surface, (180, 160, 130), (sx, sy), 11, 2)
+            si_font = get_font(12, bold=True, style="chinese")
+            si_surf = si_font.render(skill_icon, True, (80, 60, 40))
+            surface.blit(si_surf, (sx - si_surf.get_width() // 2,
+                                   sy - si_surf.get_height() // 2))
+
+
+def build_card_back(w, h, color=(70, 60, 95)):
+    """预渲染手牌背面（对手手牌用）。"""
+    import math
+    surf = pygame.Surface((w, h), pygame.SRCALPHA)
+    draw_rounded_rect(surf, color, surf.get_rect(), radius=10)
+    pygame.draw.rect(surf, (130, 120, 155), surf.get_rect(), 2,
+                     border_radius=10)
+    # 中心齿轮图案
+    cx, cy = w // 2, h // 2
+    pygame.draw.circle(surf, (130, 120, 155), (cx, cy), 14, 2)
+    for i in range(8):
+        angle = math.radians(i * 45)
+        dx = int(16 * math.cos(angle))
+        dy = int(16 * math.sin(angle))
+        pygame.draw.circle(surf, (130, 120, 155), (cx + dx, cy + dy), 3)
+    pygame.draw.circle(surf, (100, 90, 120), (cx, cy), 5)
+    # 顶部小三角装饰
+    pygame.draw.polygon(surf, (130, 120, 155), [
+        (w // 2, 8), (w // 2 - 6, 16), (w // 2 + 6, 16)
+    ])
+    return surf
 
 
 # ─── 玩具风标题组件（漂浮动效 + 星星装饰 + 悬浮交互） ──────────────

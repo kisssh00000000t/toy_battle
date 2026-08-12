@@ -57,8 +57,8 @@ TROOP_DATA: Dict[Any, dict] = {
         "desc": "【换位】放在与敌军相邻的空位，立刻与之互换位置"
     },
     11: {
-        "name": "弹弩班迪", "alias": "Bandy", "symbol": "BA", "num": 4,
-        "desc": "【穿透】消灭距离2步以内的敌军（无视中间障碍）"
+        "name": "弹弩班迪", "alias": "Bandy", "symbol": "BA", "num": 3,
+        "desc": "【穿透】消灭跨越1个节点的直线敌军（隔山打牛，中间须有棋子）"
     },
     12: {
         "name": "回旋闪回", "alias": "Yo-Yo", "symbol": "YY", "num": 6,

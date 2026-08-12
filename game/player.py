@@ -31,25 +31,41 @@ class Player:
         self.captured_areas: set[int] = set()
         self.sealed_troop: Troop | None = None
 
-    def setup_troops(self, troop_keys=None) -> None:
+    def reset(self) -> None:
+        """重置玩家状态（新局开始时调用）。"""
+        self.reserve.clear()
+        self.hand.clear()
+        self.discard.clear()
+        self.star_points = 0
+        self.captured_areas.clear()
+        self.sealed_troop = None
+
+    def setup_troops(self, troop_keys=None, rng=None) -> None:
         """初始化兵种：每种3枚，随机移除4枚，剩余入备用堆。
 
         Args:
             troop_keys: 可选的兵种键列表，用于拓展包开关过滤。
                        若为 None 则使用 TROOP_DATA 全部键。
+            rng: DeterministicRNG 实例，若提供则使用确定性随机；否则回退到原生 random。
         """
         troops: list[Troop] = []
         keys = troop_keys if troop_keys is not None else list(TROOP_DATA.keys())
         for key in keys:
             for _ in range(3):
                 troops.append(Troop(key, self.color))
-        random.shuffle(troops)
+        if rng is not None:
+            rng.shuffle(troops)
+        else:
+            random.shuffle(troops)
         # 移除4枚（不可用），剩余入备用堆
         removed = troops[:REMOVE_COUNT_PER_GAME]
         self.reserve = troops[REMOVE_COUNT_PER_GAME:]
-        random.shuffle(self.reserve)
+        if rng is not None:
+            rng.shuffle(self.reserve)
+        else:
+            random.shuffle(self.reserve)
 
-    def draw(self, count: int) -> int:
+    def draw(self, count: int = 1) -> int:
         """从备用堆抽牌到手牌。
 
         Args:
@@ -118,7 +134,7 @@ class Player:
             self.discard.append(self.sealed_troop)
         self.sealed_troop = None
 
-    def can_draw(self, game=None) -> bool:
+    def can_draw(self) -> bool:
         """是否还能抽牌。"""
         return len(self.reserve) > 0 and len(self.hand) < HAND_MAX
 
@@ -126,41 +142,25 @@ class Player:
 
     def to_dict(self) -> dict:
         """序列化玩家状态为字典。"""
-        def _ser(troops):
-            return [{"key": t.troop_key, "owner": t.owner, "facedown": t.is_facedown}
-                    for t in troops]
         return {
             "color": self.color,
             "star_points": self.star_points,
             "captured_areas": list(self.captured_areas),
-            "reserve": _ser(self.reserve),
-            "hand": _ser(self.hand),
-            "discard": _ser(self.discard),
-            "sealed_troop": ({"key": self.sealed_troop.troop_key,
-                              "owner": self.sealed_troop.owner}
-                             if self.sealed_troop else None)
+            "reserve": [t.to_dict() for t in self.reserve],
+            "hand": [t.to_dict() for t in self.hand],
+            "discard": [t.to_dict() for t in self.discard],
+            "sealed_troop": self.sealed_troop.to_dict() if self.sealed_troop else None,
         }
 
     def from_dict(self, data: dict) -> None:
         """从字典反序列化恢复玩家状态。"""
-        def _desr(data_list):
-            res = []
-            for td in data_list:
-                t = Troop(td["key"], td["owner"])
-                t.is_facedown = td.get("facedown", False)
-                res.append(t)
-            return res
-
         self.star_points = data.get("star_points", 0)
         self.captured_areas = set(data.get("captured_areas", []))
-        self.reserve = _desr(data.get("reserve", []))
-        self.hand = _desr(data.get("hand", []))
-        self.discard = _desr(data.get("discard", []))
+        self.reserve = [Troop.from_dict(td) for td in data.get("reserve", [])]
+        self.hand = [Troop.from_dict(td) for td in data.get("hand", [])]
+        self.discard = [Troop.from_dict(td) for td in data.get("discard", [])]
         st = data.get("sealed_troop")
-        if st:
-            self.sealed_troop = Troop(st["key"], st["owner"])
-        else:
-            self.sealed_troop = None
+        self.sealed_troop = Troop.from_dict(st) if st else None
 
     def __repr__(self) -> str:
         # FIX: 原代码 f"<Player {color} ...>" 引用未定义变量 color

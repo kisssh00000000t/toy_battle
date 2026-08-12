@@ -23,6 +23,10 @@ logging.basicConfig(
 
 def main():
     """主入口。"""
+    # 启动时加载配置
+    from game.constants import load_config, apply_config
+    apply_config(load_config())
+
     # 启动自检：校验图标素材完整性
     from ui.style_cache import validate_troop_mapping
     errors = validate_troop_mapping()

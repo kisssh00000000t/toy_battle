@@ -27,6 +27,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Optional
 
+from .commands import DeterministicRNG
 from .game_logic import GameState
 
 logger = logging.getLogger(__name__)
@@ -36,30 +37,22 @@ logger = logging.getLogger(__name__)
 
 def export_replay(game_state: GameState, map_source: str, filepath: str | Path):
     """导出标准确定性战报（固化开局地图拓扑、首发手牌序列与规范指令流）。"""
-    
-    # 提取最初或当前的标准化牌堆标识流，以备重置还原
-    def _extract_deck(player):
-        return [t.troop_key for t in player.reserve]
-
     replay_data = {
-        "version": "2.0",
+        "version": "2.1",
         "map_source": str(map_source),
         "winner": game_state.winner,
         "star_win_goal": game_state.star_win_goal,
         "first_player": getattr(game_state, "first_player", "red"),
-        # 【核心修复】：必须使用 to_dict() 完整保存当前真正对战的那幅全真地图
+        "rng_seed": getattr(game_state, "rng_seed", None),
         "map_data": game_state.board.to_dict(),
-        "initial_decks": {
-            "red": _extract_deck(game_state.red),
-            "blue": _extract_deck(game_state.blue),
-        },
+        "initial_decks": getattr(game_state, "initial_decks", {}),
         "action_log": game_state.action_log,
     }
     path = Path(filepath)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(replay_data, f, ensure_ascii=False, indent=2)
-    logger.info(f"\u2713 标准确定性战报已写入保存: {path}")
+    logger.info(f"✓ 标准确定性战报已写入保存: {path}")
 
 
 # ─── 回放状态枚举 ────────────────────────────────────────────
@@ -356,6 +349,10 @@ class ReplayPlayer:
             self.game.current_player_color = first_player
             self.game.first_player = first_player
             self.game.initial_decks = initial_decks
+            rng_seed = self.replay_data.get("rng_seed")
+            if rng_seed is not None:
+                self.game.rng_seed = rng_seed
+                self.game.rng = DeterministicRNG(rng_seed)
             if first_player == "red":
                 self.game.red.init_draw(True)
                 self.game.blue.init_draw(False)
@@ -390,55 +387,41 @@ class ReplayPlayer:
             return False
 
         action = self.action_log[self.cursor]
-        act_type = action.get("type")
-        data = action.get("data", {})
-        player_color = data.get("player", action.get("player", "red"))
 
-        if act_type == "draw":
+        # 新格式（GameCommand.to_dict）与旧格式兼容
+        act_type = action.get("action_type") or action.get("type")
+        player_color = action.get("source_player") or action.get("player") or "red"
+        payload = action.get("payload") or action.get("data", {})
+
+        if act_type in ("DRAW_CARD", "draw"):
             self.game.current_player_color = player_color
             self.game.draw_cards_action()
-        elif act_type == "place":
-            nid = data.get("node") or data.get("node_id")
-            node = self.game.board.get_node(nid) if nid is not None else None
-            if node:
+
+        elif act_type in ("PLAY_PIECE", "place"):
+            nid = payload.get("node_id") or payload.get("node")
+            t_key = payload.get("troop_key")
+            node = self.game.board.get_node(int(nid)) if nid is not None else None
+            if node and t_key is not None:
                 self.game.current_player_color = player_color
                 cp = self.game.current_player
-                target_key = data.get("troop_key")
-                target_troop = None
+                troop = next((t for t in cp.hand
+                              if str(t.troop_key) == str(t_key)), None)
+                if troop:
+                    self.game.place_troop(troop, node)
 
-                # 1. 严格 troop_key 匹配
-                if target_key is not None:
-                    for t in cp.hand:
-                        if t.troop_key == target_key:
-                            target_troop = t
-                            break
+        elif act_type == "CAST_SKILL":
+            self.game.current_player_color = player_color
+            target_nid = payload.get("target_nid")
+            if target_nid is not None:
+                target_nid = int(target_nid)
+            self.game.execute_pending_skill(target_nid)
 
-                # 2. 兼容旧版战报
-                if target_troop is None:
-                    troop_str = str(data.get("troop", ""))
-                    for t in cp.hand:
-                        if (str(t.troop_key) in troop_str
-                                or t.alias in troop_str
-                                or t.name in troop_str
-                                or str(t) == troop_str):
-                            target_troop = t
-                            break
+        elif act_type == "SELECT_TARGET":
+            self.game.current_player_color = player_color
+            self.game.resolve_selection(payload.get("option_id"))
 
-                # 3. 无损复原容错兜底
-                if target_troop is None and target_key is not None:
-                    from .troop import Troop
-                    target_troop = Troop(target_key, cp.color)
-                    logger.warning(
-                        f"ReplayPlayer 步骤 {self.cursor}: troop_key={target_key} "
-                        f"手牌未命中，已自动生成补充战棋"
-                    )
-
-                if target_troop:
-                    self.game.place_troop(target_troop, node)
-
-        # 当前步骤做完后尝试推进回合
-        if (not self.game.extra_place_pending
-                and self.game.turn_place_count > 0):
+        elif act_type in ("END_TURN", "end_turn"):
+            self.game.current_player_color = player_color
             self.game.end_turn()
 
         self.cursor += 1

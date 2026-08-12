@@ -5,7 +5,7 @@
 
 核心职责：
     1. 序列号自增与校对（杜绝跳帧执行）
-    2. 核心路由执行（DRAW_CARD / PLAY_PIECE / END_TURN / SYNC_INIT）
+    2. 核心路由执行（DRAW_CARD / PLAY_PIECE / END_TURN / SELECT_TARGET / SYNC_INIT）
     3. 归档 action_log（JSON 友好字典）
     4. 驱动 UI 表现钩子（on_action_executed 回调）
 
@@ -90,6 +90,8 @@ class ActionDispatcher:
             ok, msg = self._handle_end_turn(cmd)
         elif cmd.action_type == "CAST_SKILL":
             ok, msg = self._handle_cast_skill(cmd)
+        elif cmd.action_type == "SELECT_TARGET":
+            ok, msg = self._handle_select_target(cmd)
         elif cmd.action_type == "SYNC_INIT":
             ok, msg = self._handle_sync_init(cmd)
         else:
@@ -178,6 +180,27 @@ class ActionDispatcher:
             target_nid = int(target_nid)
 
         ok, msg = self.game.execute_pending_skill(target_nid)
+        return (ok, msg) if ok else (False, msg)
+
+    def _handle_select_target(self, cmd: GameCommand) -> tuple[bool, str]:
+        """处理玩家选择目标指令（回收/召回/封印/回旋等 pending_selection 场景）。
+
+        payload 必须包含:
+            target_nid: int — 玩家选择的目标节点ID
+            selection_type: str — 选择类型（如 "recall", "seal", "boomerang" 等）
+        """
+        if self.game.game_over:
+            return False, "游戏已结束"
+        if cmd.source_player != self.game.current_player_color:
+            return False, "非当前玩家行动回合"
+        if not self.game.pending_selection:
+            return False, "当前无挂起的选择"
+
+        target_nid = cmd.payload.get("target_nid")
+        if target_nid is not None:
+            target_nid = int(target_nid)
+
+        ok, msg = self.game.resolve_selection(target_nid)
         return (ok, msg) if ok else (False, msg)
 
     def _handle_sync_init(self, cmd: GameCommand) -> tuple[bool, str]:

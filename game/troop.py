@@ -6,6 +6,14 @@
 
 from .constants import TROOP_DATA
 
+_roster_counter = 0
+
+
+def _next_roster_id() -> int:
+    global _roster_counter
+    _roster_counter += 1
+    return _roster_counter
+
 
 class Troop:
     """兵种单位。
@@ -15,13 +23,15 @@ class Troop:
         owner: 所属玩家颜色（"red" / "blue"）
         data: 兵种配置字典引用
         is_facedown: 是否面朝下（备用堆/弃牌堆中为 True，手牌/场上为 False）
+        roster_id: 实例级唯一ID，支持弃牌堆精确选择
     """
 
-    def __init__(self, troop_key, owner: str):
+    def __init__(self, troop_key, owner: str, roster_id: int | None = None):
         self.troop_key = troop_key
         self.owner = owner
         self.data = TROOP_DATA[troop_key]
         self.is_facedown = True
+        self.roster_id = roster_id if roster_id is not None else _next_roster_id()
 
     @property
     def symbol(self) -> str:
@@ -43,5 +53,19 @@ class Troop:
         """兵种英文别名。"""
         return self.data["alias"]
 
+    def to_dict(self) -> dict:
+        return {
+            "troop_key": self.troop_key,
+            "owner": self.owner,
+            "is_facedown": self.is_facedown,
+            "roster_id": self.roster_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Troop":
+        t = cls(data["troop_key"], data["owner"], roster_id=data.get("roster_id"))
+        t.is_facedown = data.get("is_facedown", True)
+        return t
+
     def __repr__(self) -> str:
-        return f"<Troop {self.data['alias']} owner={self.owner}>"
+        return f"<Troop {self.data['alias']} owner={self.owner} rid={self.roster_id}>"

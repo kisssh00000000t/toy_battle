@@ -26,7 +26,7 @@ _CACHE_DIR = Path(__file__).parent.parent / "assets" / "cache"
 _CACHE_FILE = _CACHE_DIR / "style_config.json"
 
 # ─── 默认样式 ──────────────────────────────────────────────
-DEFAULT_STYLE = 1  # 默认使用样式1（经典图标）
+DEFAULT_STYLE = 3  # 默认使用样式3（卡通，含全部18种兵种）
 
 # ─── 向后兼容：保留 TROOP_NAME_MAPPING 供 settings_screen 预览区使用 ──
 # 从注册表自动生成，无需手动维护

@@ -50,6 +50,11 @@ class Camera:
         self._is_animating = False
         self._anim_speed = CAMERA_SMOOTH_SPEED  # 平滑插值速度
 
+        # 震动系统
+        self.shake_intensity = 0.0
+        self.shake_decay = 6.0  # 衰减速率（每秒）
+        self._shake_offset = (0, 0)
+
         # 变更标记（供 bg_dirty 判断）
         self.dirty = True
 
@@ -69,9 +74,9 @@ class Camera:
         return self.zoom
 
     def world_to_screen(self, wx, wy):
-        """世界坐标 → 屏幕坐标。"""
-        sx = wx * self.zoom + self.offset_x
-        sy = wy * self.zoom + self.offset_y
+        """世界坐标 → 屏幕坐标（含震动偏移）。"""
+        sx = wx * self.zoom + self.offset_x + self._shake_offset[0]
+        sy = wy * self.zoom + self.offset_y + self._shake_offset[1]
         return sx, sy
 
     def screen_to_world(self, sx, sy):
@@ -159,12 +164,13 @@ class Camera:
     #  帧更新
     # ═══════════════════════════════════════════════════════════
 
-    def update(self, dt):
-        """每帧更新：平滑移动插值。
+    def add_shake(self, intensity):
+        """触发屏幕震动。"""
+        self.shake_intensity = max(self.shake_intensity, intensity)
 
-        Args:
-            dt: 时间增量（秒）
-        """
+    def update(self, dt):
+        """每帧更新：平滑移动插值 + 震动衰减。"""
+        # 平滑移动
         if self._is_animating:
             speed = self._anim_speed * dt
             self.offset_x += (self._target_x - self.offset_x) * speed
@@ -177,6 +183,18 @@ class Camera:
                 self.offset_y = self._target_y
                 self._is_animating = False
 
+            self.dirty = True
+
+        # 震动衰减
+        if self.shake_intensity > 0.1:
+            self.shake_intensity = max(0.0, self.shake_intensity - self.shake_decay * dt)
+            import random
+            ox = random.uniform(-self.shake_intensity, self.shake_intensity)
+            oy = random.uniform(-self.shake_intensity, self.shake_intensity)
+            self._shake_offset = (ox, oy)
+            self.dirty = True
+        elif self._shake_offset != (0, 0):
+            self._shake_offset = (0, 0)
             self.dirty = True
 
     # ═══════════════════════════════════════════════════════════

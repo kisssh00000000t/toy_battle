@@ -15,10 +15,13 @@ from pathlib import Path
 import pygame
 
 from .base_screen import BaseScreen, play_stagger_spawn
+from .floating_text import FloatingTextManager
+from .turn_banner import TurnBanner
+from .board_background import build_board_background, draw_area_tints
 from .widgets import (
     ToyButton, ToyCard, TOY_COLORS,
     NumAnimateLabel, draw_rounded_rect, lighten_color, darken_color,
-    get_font, get_border_color,
+    get_font, get_border_color, build_card_back, draw_drop_shadow,
 )
 from .render_cache import get_cached_troop, get_cached_terrain, get_cached_star
 from .drag_drop import DragDropManager
@@ -31,6 +34,9 @@ from .ui_const import (
     FACTION_BG_ALPHA, CAMERA_FIT_PADDING,
     TOY_RED_BORDER, TOY_BLUE_BORDER,
     FALLBACK_GRAY,
+    OPP_CARD_W, OPP_CARD_H, OPP_CARD_GAP, OPP_CARD_Y,
+    DISCARD_PILE_X, DISCARD_PILE_Y,
+    RADIUS_SM,
 )
 from .ui_utils import make_grid_tile, tile_blit_grid, draw_alpha_rect, draw_tooltip
 from .camera import Camera
@@ -50,51 +56,6 @@ from game.constants import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# ═══════════════════════════════════════════════════════════
-#  内置兜底 AI
-# ═══════════════════════════════════════════════════════════
-
-class _BuiltinAIBot:
-    def __init__(self, color: str):
-        self.color = color
-        self.player_color = color
-
-    def decide_action(self, game_state):
-        import random
-        cp = game_state.current_player
-
-        pending = getattr(game_state, 'pending_skill', None)
-        if pending:
-            valid_targets = game_state.get_skill_target_nodes()
-            if valid_targets:
-                target = random.choice(valid_targets)
-                return {"type": "cast_skill", "target_nid": target.nid}
-            else:
-                return {"type": "undo"}
-
-        if not cp.hand:
-            return {"type": "draw"} if cp.reserve else {"type": "end_turn"}
-
-        best_move = None
-        for troop in cp.hand:
-            for node in game_state.get_valid_nodes(troop):
-                if node.is_hq and node.hq_owner == self.color:
-                    continue
-                score = 10
-                if node.is_hq and node.hq_owner != self.color:
-                    score = 10000 
-                elif troop.troop_key in (8, 9, 10, 16):
-                    score = 800
-                elif troop.troop_key == 3:
-                    score = 300
-                if best_move is None or score > best_move[0]:
-                    best_move = (score, troop, node.nid)
-
-        if best_move and best_move[0] > 0:
-            return {"type": "place", "troop_key": best_move[1].troop_key, "target_nid": best_move[2]}
-        return {"type": "draw"} if len(cp.hand) < 6 and cp.reserve else {"type": "end_turn"}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -141,7 +102,7 @@ class GameScreen(BaseScreen):
             from game.ai_bot import AIBot
             self.ai_bot = AIBot("blue") if game_mode == "ai" else None
         except ImportError:
-            self.ai_bot = _BuiltinAIBot("blue") if game_mode == "ai" else None
+            self.ai_bot = None
         self.ai_timer = 0.0
 
         self.selected_troop = None
@@ -198,11 +159,22 @@ class GameScreen(BaseScreen):
         self.skill_target_nodes = []
         self.skill_pulse_time = 0.0
 
-        self.action_stack = []
+        self._state_snapshots = []
 
         from game.particle import ParticleSystem
         self.particles = ParticleSystem()
         self.vignette = VignetteEffect((self.manager.WIN_W, self.manager.WIN_H))
+
+        # 浮动文字
+        self.floats = FloatingTextManager()
+        # 回合横幅
+        self.turn_banner = TurnBanner()
+        # 卡背缓存
+        self._card_back_surf = build_card_back(OPP_CARD_W, OPP_CARD_H)
+        # 胜利礼花标记
+        self._victory_emitted = False
+        # 记录上一回合玩家（用于检测回合切换）
+        self._prev_turn_color = self.game.current_player_color
 
         self.camera = Camera(self.manager.WIN_W, self.manager.WIN_H)
         self.calc_map_transform()
@@ -260,6 +232,7 @@ class GameScreen(BaseScreen):
     def _handle_game_over(self):
         if self.game_over_shown: return
         self.game_over_shown = True
+        self._victory_emitted = False
         self.net_waiting_sync = False
         play_sound(SND_WIN)
 
@@ -301,7 +274,7 @@ class GameScreen(BaseScreen):
 
     def _do_draw(self):
         if self.game.game_over: return
-        if self.action_stack:
+        if self._state_snapshots:
             self.status_msg = "本回合已放置单位，无法抽卡"
             self.status_timer = 90
             play_sound(SND_ERROR)
@@ -310,56 +283,45 @@ class GameScreen(BaseScreen):
         ok, _ = self.dispatcher.dispatch(cmd)
         if ok and self.game_mode == "net" and self.net_client:
             self.net_client.send_action(cmd.to_dict())
-        self.action_stack.clear()
+        self._state_snapshots.clear()
 
     def _do_end_turn(self):
         if self.game.game_over: return
         cmd = GameCommand("END_TURN", source_player=self.game.current_player_color)
         ok, _ = self.dispatcher.dispatch(cmd)
         if ok:
-            self.action_stack.clear()
+            self._state_snapshots.clear()
             if self.game_mode == "net" and self.net_client:
                 self.net_client.send_action(cmd.to_dict())
 
+    def _save_snapshot(self):
+        import copy
+        self._state_snapshots.append({
+            "game": copy.deepcopy(self.game.to_dict()),
+            "seq_id": self.dispatcher.current_seq_id,
+            "log_len": len(self.dispatcher.action_log),
+        })
+
     def _undo_action(self):
-        """修复版撤销：精准定位属于哪个玩家的手牌，完美还原堆叠。"""
-        if not self.action_stack:
+        """快照式撤销：从深拷贝恢复完整游戏状态。"""
+        if self.game_mode == "net":
+            return
+        if self.game.game_over or self.game.pending_skill or getattr(self.game, 'pending_selection', None):
+            return
+        if not self._state_snapshots:
             self.status_msg = "无可撤销操作"
             self.status_timer = 60
             play_sound(SND_ERROR)
             return
-            
-        troop, node_id, prev_count, prev_extra, player_color = self.action_stack.pop()
-        
-        if troop is None:
-            self.status_msg = "无法撤销此操作"
-            self.status_timer = 60
-            play_sound(SND_ERROR)
-            return
-            
-        node = self.game.board.get_node(node_id)
-        if troop in node.stack:
-            node.stack.remove(troop)
-            
-        # 根据记录的玩家颜色找回对应的手牌集合，避免串牌
-        cp = self.game.red if player_color == "red" else self.game.blue
-        if troop not in cp.hand:
-            cp.hand.append(troop)
-            
-        self.game.current_player_color = player_color
-        self.game.current_player = cp
-        self.game.turn_place_count = prev_count
-        self.game.extra_place_pending = prev_extra
-        
-        if getattr(self.game, 'pending_skill', None):
-            self.game.pending_skill = None
-            self.skill_target_nodes = []
-            self.skill_pulse_time = 0.0
-            
+        snap = self._state_snapshots.pop()
+        self.game.from_dict(snap["game"])
+        self.dispatcher.current_seq_id = snap["seq_id"]
+        del self.dispatcher.action_log[snap["log_len"]:]
+        self.game.action_log = self.dispatcher.action_log
         self.selected_troop = None
         self.valid_nodes = []
         self.bg_dirty = True
-        self.status_msg = f"已撤销: {troop.name}"
+        self.status_msg = "已撤销"
         self.status_timer = 60
         play_sound(SND_UNDO)
 
@@ -392,6 +354,19 @@ class GameScreen(BaseScreen):
             play_sound(SND_PLACE)
             self._play_effect_sounds()
 
+            # 浮动文字：覆盖/自毁等
+            if node and node.top_troop:
+                sx, sy = self.camera.world_to_screen(node.x, node.y)
+                placed_name = node.top_troop.name
+                msg = self.game.turn_msg or ""
+                if "自毁" in msg or "爆弹" in msg:
+                    self.floats.emit("BOOM!", sx, sy, (255, 80, 80), 36)
+                    self.camera.add_shake(10)
+                elif "回旋" in msg:
+                    self.floats.emit("回旋!", sx, sy, (100, 200, 255), 24)
+                elif "队长" in placed_name:
+                    self.floats.emit("再置!", sx, sy, (255, 200, 50), 22)
+
             if self.game.game_over:
                 self._handle_game_over()
             elif self.game.extra_place_pending:
@@ -403,6 +378,7 @@ class GameScreen(BaseScreen):
 
         elif cmd.action_type == "END_TURN":
             play_sound(SND_TURN)
+            self.camera.add_shake(2)
             self.status_msg = f"轮到 {self.game.current_player_color.upper()} 方行动"
             self.status_timer = 60
 
@@ -417,6 +393,14 @@ class GameScreen(BaseScreen):
                 self.status_timer = 90
             self.skill_target_nodes = []
             self.skill_pulse_time = 0.0
+            # 技能效果浮动文字
+            if msg:
+                if "牵引" in msg or "拉动" in msg:
+                    self.floats.emit("牵引!", 0, 0, (180, 130, 255), 22)
+                elif "击杀" in msg or "消灭" in msg:
+                    self.camera.add_shake(5)
+                elif "失败" in msg or "无法" in msg:
+                    self.floats.emit("失败!", 0, 0, (255, 180, 50), 20)
 
         self.selected_troop = None
         self.valid_nodes = []
@@ -495,6 +479,18 @@ class GameScreen(BaseScreen):
         if event.type == pygame.MOUSEBUTTONDOWN:
             mx, my = event.pos
 
+            # ── pending_selection 选择模式 ──
+            if getattr(self.game, 'pending_selection', None):
+                sel = self.game.pending_selection
+                if event.button == 1:
+                    handled = self._handle_selection_click(event.pos, sel)
+                    if handled:
+                        return
+                elif event.button == 3:
+                    if sel.get("cancellable"):
+                        self._dispatch_select(None)
+                    return
+
             # ── 右键跳过技能选择 (交由后端正规处理) ──
             if event.button == 3:
                 if getattr(self.game, 'pending_skill', None):
@@ -523,6 +519,7 @@ class GameScreen(BaseScreen):
                     click_r = t.scaled_click_radius(NODE_CLICK_RADIUS + 6)
                     clicked_node = self.game.board.get_node_by_pos(wx, wy, radius=click_r)
                     if clicked_node is not None and clicked_node in self.skill_target_nodes:
+                        self._save_snapshot()
                         cmd = GameCommand(
                             "CAST_SKILL",
                             source_player=self.game.current_player_color,
@@ -553,8 +550,7 @@ class GameScreen(BaseScreen):
                     click_r = t.scaled_click_radius(NODE_CLICK_RADIUS + 6)
                     node = self.game.board.get_node_by_pos(wx, wy, radius=click_r)
                     if node is not None and node in self.valid_nodes:
-                        _prev_count = self.game.turn_place_count
-                        _prev_extra = self.game.extra_place_pending
+                        self._save_snapshot()
                         
                         placed_troop = self.selected_troop
                         player_col = self.game.current_player_color
@@ -566,11 +562,6 @@ class GameScreen(BaseScreen):
                         )
                         ok, _ = self.dispatcher.dispatch(cmd)
                         if ok:
-                            if "骷髅" in getattr(placed_troop, "name", ""):
-                                self.action_stack.clear()
-                            else:
-                                self.action_stack.append((placed_troop, node.nid, _prev_count, _prev_extra, player_col))
-                                
                             self.selected_troop = None
                             self.valid_nodes = []
                             
@@ -652,16 +643,11 @@ class GameScreen(BaseScreen):
     def _make_troop_drag_image(self, troop):
         w, h = HAND_CARD_W, HAND_CARD_H
         surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        rect = pygame.Rect(0, 0, w, h)
+        card = ToyCard(troop, rect, selected=True,
+                       player_color_name=self.game.current_player_color)
         cp_color = PLAYER_COLORS.get(self.game.current_player_color, FALLBACK_GRAY)
-        draw_rounded_rect(surf, cp_color, pygame.Rect(0, 0, w, h), radius=12)
-        border_col = TOY_RED_BORDER if self.game.current_player_color == "red" else TOY_BLUE_BORDER
-        pygame.draw.rect(surf, border_col, pygame.Rect(0, 0, w, h), width=2, border_radius=12)
-        tro_surf = get_cached_troop(troop.troop_key, self.game.current_player_color, target_size=24)
-        surf.blit(tro_surf, (w // 2 - tro_surf.get_width() // 2, h // 2 - 8 - tro_surf.get_height() // 2))
-        val_font = get_font(14, style="english")
-        val = str(troop.number) if troop.number else "J"
-        val_surf = val_font.render(val, True, (255, 255, 255))
-        surf.blit(val_surf, (4, h - 18))
+        card.draw(surf, cp_color)
         return surf
 
     def _find_board_node(self, mx, my):
@@ -675,8 +661,7 @@ class GameScreen(BaseScreen):
             return
         valid = self.game.get_valid_nodes(troop)
         if node in valid:
-            _prev_count = self.game.turn_place_count
-            _prev_extra = self.game.extra_place_pending
+            self._save_snapshot()
             
             player_col = self.game.current_player_color
             cmd = GameCommand(
@@ -685,30 +670,113 @@ class GameScreen(BaseScreen):
                 payload={"troop_key": troop.troop_key, "node_id": node.nid},
             )
             ok, _ = self.dispatcher.dispatch(cmd)
-            if ok:
-                if "骷髅" in getattr(troop, "name", ""):
-                    self.action_stack.clear()
-                else:
-                    self.action_stack.append((troop, node.nid, _prev_count, _prev_extra, player_col))
-                
-                # 自动跳过无目标的技能，极致顺滑
-                if getattr(self.game, 'pending_skill', None):
-                    self.skill_target_nodes = self.game.get_skill_target_nodes()
-                    if not self.skill_target_nodes:
-                        cmd_skip = GameCommand("CAST_SKILL", source_player=self.game.current_player_color, payload={"target_nid": None})
-                        ok_skip, _ = self.dispatcher.dispatch(cmd_skip)
-                        if ok_skip and self.game_mode == "net" and self.net_client:
-                            self.net_client.send_action(cmd_skip.to_dict())
-                        self.status_msg = "无合法技能目标，已自动跳过"
-                        self.status_timer = 90
-                
-                if self.game_mode == "net" and self.net_client:
-                    self.net_client.send_action(cmd.to_dict())
-            else:
-                self.status_msg = self.game.turn_msg
-                self.status_timer = 90
+            
+            # 自动跳过无目标的技能，极致顺滑
+            if getattr(self.game, 'pending_skill', None):
+                self.skill_target_nodes = self.game.get_skill_target_nodes()
+                if not self.skill_target_nodes:
+                    cmd_skip = GameCommand("CAST_SKILL", source_player=self.game.current_player_color, payload={"target_nid": None})
+                    ok_skip, _ = self.dispatcher.dispatch(cmd_skip)
+                    if ok_skip and self.game_mode == "net" and self.net_client:
+                        self.net_client.send_action(cmd_skip.to_dict())
+                    self.status_msg = "无合法技能目标，已自动跳过"
+                    self.status_timer = 90
+            
+            if self.game_mode == "net" and self.net_client:
+                self.net_client.send_action(cmd.to_dict())
+        else:
+            self.status_msg = self.game.turn_msg
+            self.status_timer = 90
         self.selected_troop = None
         self.valid_nodes = []
+
+    # ── pending_selection UI 处理 ──
+
+    def _handle_selection_click(self, pos, sel):
+        stype = sel["type"]
+
+        if stype in ("recall", "yoyo_target"):
+            # 点击地图节点 — 使用 camera 坐标变换
+            mx, my = pos
+            t = self.camera
+            wx, wy = t.screen_to_world(mx, my)
+            click_r = t.scaled_click_radius(NODE_CLICK_RADIUS + 6)
+            clicked_node = self.game.board.get_node_by_pos(wx, wy, radius=click_r)
+            if clicked_node is not None:
+                nid = clicked_node.nid
+                if any(o["id"] == nid for o in sel["options"]):
+                    self._dispatch_select(nid)
+                    return True
+            return False
+
+        elif stype == "recover_discard":
+            # 点击弃牌堆弹窗中的牌
+            return self._handle_discard_pile_click(pos, sel)
+
+        elif stype == "seal":
+            # 点击对手手牌区域（背面）
+            return self._handle_seal_click(pos, sel)
+
+        return False
+
+    def _dispatch_select(self, option_id):
+        cmd = GameCommand(
+            "SELECT_TARGET",
+            source_player=self.game.current_player_color,
+            payload={"option_id": option_id},
+        )
+        self.dispatcher.dispatch(cmd)
+        self._refresh_all_sprites()
+
+    def _handle_discard_pile_click(self, pos, sel):
+        """弃牌堆选择弹窗点击检测。"""
+        pg = pygame
+        card_w, card_h = 70, 100
+        gap = 16
+        total = len(sel["options"])
+        total_w = total * card_w + (total - 1) * gap
+        
+        # 坐标需与渲染界面严格对齐
+        pw, ph = max(total_w + 80, 400), card_h + 140
+        px = (self.manager.WIN_W - pw) // 2
+        py = (self.manager.WIN_H - ph) // 2
+        start_x = px + (pw - total_w) // 2
+        card_y = py + 80
+        
+        for i, opt in enumerate(sel["options"]):
+            rect = pg.Rect(start_x + i * (card_w + gap), card_y, card_w, card_h)
+            if rect.collidepoint(pos):
+                self._dispatch_select(opt["id"])
+                return True
+        return False
+
+    def _handle_seal_click(self, pos, sel):
+        """对手手牌背面点击（使用OPP_CARD常量）。"""
+        opp_color = "blue" if self.game.current_player_color == "red" else "red"
+        opp = getattr(self.game, opp_color, None)
+        if not opp: return False
+        n = len(opp.hand)
+        if n == 0: return False
+        
+        cw, ch, gap = OPP_CARD_W, OPP_CARD_H, OPP_CARD_GAP
+        total_w = n * cw + (n - 1) * gap
+        start_x = self.manager.WIN_W - total_w - 20
+        y = OPP_CARD_Y
+        
+        for i in range(n):
+            rect = pygame.Rect(start_x + i * (cw + gap), y, cw, ch)
+            if rect.collidepoint(pos):
+                self._dispatch_select(i)
+                return True
+        return False
+
+    def _refresh_all_sprites(self):
+        """刷新所有节点精灵（选择后状态变化）。"""
+        self.bg_dirty = True
+        self.selected_troop = None
+        self.valid_nodes = []
+        self.skill_target_nodes = []
+        self.skill_pulse_time = 0.0
 
     def update(self, dt):
         self.camera.update(dt)
@@ -737,6 +805,16 @@ class GameScreen(BaseScreen):
             self._prev_blue_stars = blue_stars
             self._emit_star_capture_particles("blue")
             play_sound(SND_STAR)
+
+        # 回合切换横幅
+        cur_color = self.game.current_player_color
+        if cur_color != self._prev_turn_color and not self.game.game_over:
+            self.turn_banner.show(
+                f"{'红' if cur_color == 'red' else '蓝'}方回合",
+                PLAYER_COLORS.get(cur_color, FALLBACK_GRAY),
+                "请选择手牌或抽卡"
+            )
+            self._prev_turn_color = cur_color
             
         if self.valid_nodes and not hasattr(self, '_pulse_tween_active'):
             self._pulse_tween_active = True
@@ -756,6 +834,9 @@ class GameScreen(BaseScreen):
             self.skill_pulse_time = 0.0
 
         self.particles.update()
+
+        self.floats.update(dt)
+        self.turn_banner.update(dt)
 
         if self.net_waiting_sync:
             self.watchdog_timer += dt
@@ -788,6 +869,10 @@ class GameScreen(BaseScreen):
         elif atype == "cast_skill":
             cmd = GameCommand("CAST_SKILL", source_player=self.ai_bot.player_color,
                               payload={"target_nid": action.get("target_nid")})
+            self.dispatcher.dispatch(cmd)
+        elif atype == "select":
+            cmd = GameCommand("SELECT_TARGET", source_player=self.ai_bot.player_color,
+                              payload={"option_id": action.get("option_id")})
             self.dispatcher.dispatch(cmd)
         elif atype == "undo":
             self._undo_action()
@@ -862,9 +947,43 @@ class GameScreen(BaseScreen):
     def draw(self, surface):
         surface.fill(TOY_COLORS["bg_cream"])
         self._draw_board(surface)
+        self._draw_opponent_hand(surface)
         self._draw_hand(surface)
         self._draw_info(surface)
+        self._draw_discard_pile(surface)
         self._draw_status_msg(surface)
+
+        # ── pending_selection 选择提示和高亮 ──
+        if getattr(self.game, 'pending_selection', None):
+            sel = self.game.pending_selection
+            
+            # 【修复 BUG & 优化】针对磁钩或召回地块的动态高光
+            if sel["type"] in ("recall", "yoyo_target"):
+                for opt in sel["options"]:
+                    node = self.game.board.get_node(opt["id"])
+                    if node:
+                        t = self.camera
+                        sx, sy = t.world_to_screen(node.x, node.y)
+                        nr = t.scaled_radius(NODE_RENDER_RADIUS)
+                        half = nr + max(1, int(4 * t.scale)) if node.is_hq else nr
+                        tile_rect = pygame.Rect(int(sx) - half, int(sy) - half, half * 2, half * 2)
+                        
+                        # 添加玩具风格的呼吸灯特效
+                        pulse = int(4 * math.sin(pygame.time.get_ticks() * 0.005))
+                        hl_rect = tile_rect.inflate(8 + pulse, 8 + pulse)
+                        pygame.draw.rect(surface, (255, 220, 50), hl_rect, 4, border_radius=TILE_ROUND_RADIUS + 4)
+                        pygame.draw.rect(surface, (255, 255, 255), hl_rect.inflate(4, 4), 1, border_radius=TILE_ROUND_RADIUS + 6)
+            
+            hint = " (右键取消)" if sel.get("cancellable") else ""
+            self._draw_hint(f"请选择 {sel['type']} 目标{hint}")
+            
+            # 【优化】修改传参，使弹窗正确渲染
+            if sel["type"] == "recover_discard":
+                self._draw_discard_pile_dialog(surface, sel)
+            
+            # 【优化】修改传参
+            if sel["type"] == "seal":
+                self._draw_opponent_hand_highlight(surface)
         
         t = self.camera
         valid_set = set(nd.nid for nd in self.valid_nodes) if self.drag_mgr.dragging else None
@@ -883,6 +1002,8 @@ class GameScreen(BaseScreen):
         self._draw_tooltip(surface)  
         
         self.particles.draw(surface)
+        self.floats.draw(surface)
+        self.turn_banner.draw(surface)
         self.vignette.render(surface)
         for widget in self.widgets:
             widget.draw(surface)
@@ -924,86 +1045,173 @@ class GameScreen(BaseScreen):
             card.draw(surface, player_color)
 
     def _draw_info(self, surface):
-        """绘制左上角的信息状态栏（回合、分数、牌堆数量等）"""
+        """左上角信息栏：回合指示 + 星星 + 牌量。"""
         cp_color = self.game.current_player_color
         player_color = PLAYER_COLORS.get(cp_color, FALLBACK_GRAY)
-        
-        # 当前行动回合
+
+        # 回合指示圆点
+        pygame.draw.circle(surface, player_color, (32, 26), 13)
+        pygame.draw.circle(surface, (255, 255, 255), (32, 26), 13, 3)
         font = get_font(22, bold=True, style="chinese")
-        label = font.render(f"当前: {cp_color.upper()}", True, player_color)
-        surface.blit(label, (20, 10))
-        
-        # 勋章分数 (红蓝双方)
-        star_font = get_font(18, style="chinese")
-        red_prefix = star_font.render("红方: ", True, PLAYER_COLORS["red"])
-        blue_prefix = star_font.render("蓝方: ", True, PLAYER_COLORS["blue"])
-        surface.blit(red_prefix, (20, 40))
-        surface.blit(blue_prefix, (20, 65))
-        
-        # 红方星星数字动画
-        self.red_star_label.x = 20 + red_prefix.get_width()
-        self.red_star_label.y = 40
-        self.red_star_label.draw(surface)
-        
-        goal_font = get_font(18, style="chinese")
-        red_goal = goal_font.render(f"/{self.game.star_win_goal}", True, PLAYER_COLORS["red"])
-        surface.blit(red_goal, (self.red_star_label.x + 30, 40))
-        
-        # 蓝方星星数字动画
-        self.blue_star_label.x = 20 + blue_prefix.get_width()
-        self.blue_star_label.y = 65
-        self.blue_star_label.draw(surface)
-        
-        blue_goal = goal_font.render(f"/{self.game.star_win_goal}", True, PLAYER_COLORS["blue"])
-        surface.blit(blue_goal, (self.blue_star_label.x + 30, 65))
-        
-        # 回合消息与玩具队长额外放置提示
+        label = font.render(f"{cp_color.upper()} 回合", True, player_color)
+        surface.blit(label, (52, 14))
+
+        # 红方星星行
+        red_prefix = get_font(16, bold=True, style="chinese").render(
+            "红", True, PLAYER_COLORS["red"])
+        surface.blit(red_prefix, (20, 50))
+        for i in range(self.game.star_win_goal):
+            state = "red" if i < self.game.red.star_points else "gray"
+            s = get_cached_star(state, 11)
+            surface.blit(s, (40 + i * 24, 48))
+
+        # 蓝方星星行
+        blue_prefix = get_font(16, bold=True, style="chinese").render(
+            "蓝", True, PLAYER_COLORS["blue"])
+        surface.blit(blue_prefix, (20, 74))
+        for i in range(self.game.star_win_goal):
+            state = "blue" if i < self.game.blue.star_points else "gray"
+            s = get_cached_star(state, 11)
+            surface.blit(s, (40 + i * 24, 72))
+
+        # 牌量信息
+        small_font = get_font(15, bold=True, style="chinese")
+        cp = self.game.current_player
+        info_y = 100
+        surface.blit(small_font.render(
+            f"牌库 {len(cp.reserve)}", True, TOY_COLORS["dark_text"]), (20, info_y))
+        surface.blit(small_font.render(
+            f"手牌 {len(cp.hand)}", True, TOY_COLORS["dark_text"]), (90, info_y))
+        surface.blit(small_font.render(
+            f"弃牌 {len(cp.discard)}", True, TOY_COLORS["dark_text"]), (160, info_y))
+
+        # 回合消息
         if self.game.turn_msg:
-            msg_font = get_font(16, style="chinese")
-            msg_surf = msg_font.render(self.game.turn_msg, True, TOY_COLORS["dark_text"])
-            surface.blit(msg_surf, (20, 95))
-            
+            msg_font = get_font(15, style="chinese")
+            msg_surf = msg_font.render(self.game.turn_msg, True, (90, 90, 100))
+            surface.blit(msg_surf, (20, 122))
+
+        # 队长额外放置提示
         if self.game.extra_place_pending:
             extra_font = get_font(20, bold=True, style="chinese")
-            extra_surf = extra_font.render("玩具队长：可再放置一张！", True, TOY_COLORS["accent_coral"])
+            extra_surf = extra_font.render("队长：可再放置一张！",
+                                           True, TOY_COLORS["accent_coral"])
             surface.blit(extra_surf, (400, 10))
-            
-        # 手牌与牌库余量指示
-        hand_font = get_font(16, style="chinese")
-        hand_info = hand_font.render(
-            f"手牌:{len(self.game.current_player.hand)} | 备用堆:{len(self.game.current_player.reserve)}",
-            True, TOY_COLORS["dark_text"]
-        )
-        surface.blit(hand_info, (20, 120))
+
+    def _draw_opponent_hand(self, surface):
+        """对手手牌：卡背 + 封印标红。"""
+        opp_color = "blue" if self.game.current_player_color == "red" else "red"
+        opp = getattr(self.game, opp_color, None)
+        if opp is None:
+            return
+        n = len(opp.hand)
+        if n == 0:
+            return
+        cw = OPP_CARD_W
+        ch = OPP_CARD_H
+        gap = OPP_CARD_GAP
+        total_w = n * cw + (n - 1) * gap
+        start_x = self.manager.WIN_W - total_w - 20
+        y = OPP_CARD_Y
+        for i in range(n):
+            x = start_x + i * (cw + gap)
+            rect = pygame.Rect(x, y, cw, ch)
+            surface.blit(self._card_back_surf, rect.topleft)
+            pygame.draw.rect(surface, PLAYER_COLORS.get(opp_color, FALLBACK_GRAY),
+                             rect, 2, border_radius=RADIUS_SM)
+            # 封印标红
+            troop = opp.hand[i]
+            if hasattr(troop, "sealed") and troop.sealed:
+                seal_surf = pygame.Surface((cw, ch), pygame.SRCALPHA)
+                seal_surf.fill((255, 0, 0, 50))
+                surface.blit(seal_surf, rect.topleft)
+
+    def _draw_discard_pile(self, surface):
+        """弃牌堆：侧面牌堆 + 数量 + 标签。"""
+        pile = self.game.current_player.discard_pile if hasattr(self.game.current_player, "discard_pile") else []
+        n = len(pile)
+        x = DISCARD_PILE_X
+        y = DISCARD_PILE_Y
+        # 牌堆侧面（最多显示5张偏移）
+        show = min(n, 5)
+        for i in range(show):
+            offset = i * 2
+            r = pygame.Rect(x + offset, y + offset, 36, 50)
+            pygame.draw.rect(surface, (180, 170, 150), r, border_radius=RADIUS_SM)
+            pygame.draw.rect(surface, (120, 110, 100), r, 1, border_radius=RADIUS_SM)
+        # 数量角标
+        if n > 0:
+            badge_font = get_font(14, bold=True)
+            badge = badge_font.render(str(n), True, (255, 255, 255))
+            bx = x + show * 2 + 18
+            by = y - 6
+            pygame.draw.circle(surface, (60, 60, 60), (bx, by + 8), 12)
+            surface.blit(badge, (bx - badge.get_width() // 2, by + 2))
+        # 标签
+        label_font = get_font(14, style="chinese")
+        label = label_font.render("弃牌堆", True, (140, 140, 140))
+        surface.blit(label, (x - 4, y + 56))
 
     def _draw_game_over(self, surface):
-        """游戏结束时绘制半透明遮罩与胜负文字"""
-        overlay = pygame.Surface((self.manager.WIN_W, self.manager.WIN_H), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 120))
+        """游戏结束：礼花 + 遮罩 + 结果 + 数据。"""
+        # 礼花粒子
+        if not self._victory_emitted:
+            self._victory_emitted = True
+            import random
+            for _ in range(8):
+                self.particles.emit_victory(
+                    random.randint(100, self.manager.WIN_W - 100),
+                    random.randint(50, 250))
+            self.camera.add_shake(8)
+
+        overlay = pygame.Surface((self.manager.WIN_W, self.manager.WIN_H),
+                                 pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 130))
         surface.blit(overlay, (0, 0))
 
         winner = self.game.winner
         if winner:
             color = PLAYER_COLORS.get(winner, FALLBACK_GRAY)
-            text = f"{winner.upper()} 方胜利！"
+            text = f"{'红' if winner == 'red' else '蓝'}方胜利！"
         else:
             color = TOY_COLORS["dark_text"]
             text = "平局！"
 
-        font_big = get_font(48, bold=True, style="chinese")
+        font_big = get_font(52, bold=True, style="chinese")
         txt_surf = font_big.render(text, True, color)
-        cx = self.manager.WIN_W // 2 - txt_surf.get_width() // 2
-        cy = self.manager.WIN_H // 2 - txt_surf.get_height() // 2
 
-        pw = txt_surf.get_width() + 80
-        ph = txt_surf.get_height() + 40
-        px = cx - 40
-        py = cy - 20
+        pw = max(txt_surf.get_width() + 100, 420)
+        ph = 240
+        px = self.manager.WIN_W // 2 - pw // 2
+        py = self.manager.WIN_H // 2 - ph // 2 - 20
+
         panel_surf = pygame.Surface((pw, ph), pygame.SRCALPHA)
-        draw_rounded_rect(panel_surf, (255, 255, 245, 230), panel_surf.get_rect(), radius=20)
-        pygame.draw.rect(panel_surf, color, panel_surf.get_rect(), 6, border_radius=20)
+        draw_rounded_rect(panel_surf, (255, 255, 245, 240),
+                          panel_surf.get_rect(), radius=24)
+        pygame.draw.rect(panel_surf, color, panel_surf.get_rect(), 6,
+                         border_radius=24)
         surface.blit(panel_surf, (px, py))
-        surface.blit(txt_surf, (cx, cy))
+        surface.blit(txt_surf, (self.manager.WIN_W // 2 - txt_surf.get_width() // 2,
+                                py + 24))
+
+        # 数据统计
+        stats_font = get_font(18, style="chinese")
+        red = self.game.red
+        blue = self.game.blue
+        stats = [
+            f"红方勋章 {red.star_points}    蓝方勋章 {blue.star_points}",
+            f"红方剩余 {len(red.hand) + len(red.reserve)}    "
+            f"蓝方剩余 {len(blue.hand) + len(blue.reserve)}",
+        ]
+        for i, s in enumerate(stats):
+            s_surf = stats_font.render(s, True, (80, 80, 90))
+            surface.blit(s_surf, (self.manager.WIN_W // 2 - s_surf.get_width() // 2,
+                                  py + 100 + i * 28))
+
+        tip_font = get_font(16, style="chinese")
+        tip = tip_font.render("点击任意位置继续", True, (150, 150, 150))
+        surface.blit(tip, (self.manager.WIN_W // 2 - tip.get_width() // 2,
+                           py + ph - 36))
 
     def _emit_place_particles(self, node):
         """放置兵种时在节点位置发射碎屑粒子"""
@@ -1014,7 +1222,7 @@ class GameScreen(BaseScreen):
         self.particles.emit_troop_place(sx, sy, color=color)
 
     def _emit_star_capture_particles(self, color_name):
-        """占领星星时在星星位置发射金色碎屑粒子"""
+        """占领星星时发射粒子 + 浮动文字。"""
         board = self.game.board
         t = self.camera
         player = self.game.red if color_name == "red" else self.game.blue
@@ -1026,6 +1234,8 @@ class GameScreen(BaseScreen):
                 wx, wy = sp["x"], sp["y"]
                 sx, sy = t.world_to_screen(wx, wy)
                 self.particles.emit_star_capture(sx, sy, color=star_color)
+                self.floats.emit("★ +1", sx, sy, (255, 210, 0), 28)
+                self.camera.add_shake(4)
 
     def _draw_status_msg(self, surface):
         if self.status_timer > 0 and self.status_msg:
@@ -1035,14 +1245,99 @@ class GameScreen(BaseScreen):
             ph = txt_surf.get_height() + 24
             bg_rect = pygame.Rect(0, 0, pw, ph)
             bg_rect.centerx = self.manager.WIN_W // 2
-            bg_rect.y = 20  
+            bg_rect.y = 80  # 下拉以免盖住顶部 UI
+            
+            # 添加玩具风阴影
+            draw_drop_shadow(surface, bg_rect, radius=18, offset=(0, 6), alpha=50)
             
             bg_surf = pygame.Surface((pw, ph), pygame.SRCALPHA)
-            draw_rounded_rect(bg_surf, (255, 255, 245, 240), bg_surf.get_rect(), radius=18)
+            draw_rounded_rect(bg_surf, (255, 255, 245, 245), bg_surf.get_rect(), radius=18)
             pygame.draw.rect(bg_surf, TOY_COLORS["secondary_cyan"], bg_surf.get_rect(), 4, border_radius=18)
             
             surface.blit(bg_surf, bg_rect.topleft)
             surface.blit(txt_surf, (bg_rect.x + 40, bg_rect.y + 12))
+
+    def _draw_hint(self, text):
+        """在状态栏位置显示选择提示。"""
+        self.status_msg = text
+        self.status_timer = 120
+
+    def _draw_discard_pile_dialog(self, surface, sel):
+        """弃牌堆选择弹窗（马卡龙风格）。"""
+        pg = pygame
+        card_w, card_h = 70, 100
+        gap = 16
+        total = len(sel["options"])
+        total_w = total * card_w + (total - 1) * gap
+        
+        # 绘制半透明黑色遮罩
+        overlay = pg.Surface((self.manager.WIN_W, self.manager.WIN_H), pg.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        surface.blit(overlay, (0, 0))
+        
+        # 弹窗背景板计算
+        pw, ph = max(total_w + 80, 400), card_h + 140
+        px = (self.manager.WIN_W - pw) // 2
+        py = (self.manager.WIN_H - ph) // 2
+        panel_rect = pg.Rect(px, py, pw, ph)
+        
+        # 绘制阴影和面板
+        draw_drop_shadow(surface, panel_rect, radius=20, offset=(0, 10), alpha=60)
+        draw_rounded_rect(surface, TOY_COLORS["panel_bg"], panel_rect, radius=20)
+        pg.draw.rect(surface, TOY_COLORS["primary_yellow"], panel_rect, 4, border_radius=20)
+        
+        # 标题文字
+        title_font = get_font(24, bold=True, style="chinese")
+        title_txt = title_font.render("请选择要回收的卡牌", True, TOY_COLORS["dark_text"])
+        surface.blit(title_txt, (px + (pw - title_txt.get_width()) // 2, py + 20))
+        
+        # 绘制候选卡牌
+        start_x = px + (pw - total_w) // 2
+        card_y = py + 80
+        mx, my = pg.mouse.get_pos()
+        
+        for i, opt in enumerate(sel["options"]):
+            rect = pg.Rect(start_x + i * (card_w + gap), card_y, card_w, card_h)
+            is_hover = rect.collidepoint((mx, my))
+            
+            # 悬停弹起互动效果
+            bg_color = (255, 255, 255) if not is_hover else (255, 250, 200)
+            if is_hover:
+                rect.y -= 6
+                draw_drop_shadow(surface, rect, radius=10, offset=(0, 6), alpha=50)
+            else:
+                draw_drop_shadow(surface, rect, radius=10, offset=(0, 3), alpha=30)
+                
+            draw_rounded_rect(surface, bg_color, rect, radius=10)
+            pg.draw.rect(surface, TOY_COLORS["secondary_cyan"] if is_hover else TOY_COLORS["panel_stroke"], rect, 2, border_radius=10)
+            
+            font = get_font(16, bold=True, style="chinese")
+            name = opt.get("name", "?")
+            txt = font.render(name, True, TOY_COLORS["dark_text"])
+            surface.blit(txt, (rect.centerx - txt.get_width() // 2, rect.centery - txt.get_height() // 2))
+
+    def _draw_opponent_hand_highlight(self, surface):
+        """封印对手手牌高亮（使用OPP_CARD常量+呼吸灯）。"""
+        opp_color = "blue" if self.game.current_player_color == "red" else "red"
+        opp = getattr(self.game, opp_color, None)
+        if opp is None: return
+        n = len(opp.hand)
+        if n == 0: return
+        
+        cw, ch, gap = OPP_CARD_W, OPP_CARD_H, OPP_CARD_GAP
+        total_w = n * cw + (n - 1) * gap
+        start_x = self.manager.WIN_W - total_w - 20
+        y = OPP_CARD_Y
+        
+        pulse = int(4 * math.sin(pygame.time.get_ticks() * 0.005))
+        for i in range(n):
+            rect = pygame.Rect(start_x + i * (cw + gap), y, cw, ch)
+            hl_rect = rect.inflate(8 + pulse, 8 + pulse)
+            pygame.draw.rect(surface, (255, 100, 100), hl_rect, 4, border_radius=12)
+            pygame.draw.rect(surface, (255, 255, 255), hl_rect.inflate(4, 4), 2, border_radius=14)
+
+
+
 
     def _draw_tooltip(self, surface):
         if self.tooltip_timer > 0 and self.tooltip_text:
@@ -1061,6 +1356,7 @@ class GameScreen(BaseScreen):
                 bg_surf = pygame.Surface((bg_rect.w, bg_rect.h), pygame.SRCALPHA)
                 draw_rounded_rect(bg_surf, (*TOY_COLORS["panel_bg"][:3], 240), bg_surf.get_rect(), radius=10)
                 pygame.draw.rect(bg_surf, TOY_COLORS["panel_stroke"], bg_surf.get_rect(), 2, border_radius=10)
+                draw_drop_shadow(surface, bg_rect, radius=10, offset=(0, 4), alpha=40)
                 surface.blit(bg_surf, bg_rect.topleft)
                 
                 for i, line in enumerate(lines):
@@ -1080,6 +1376,7 @@ class GameScreen(BaseScreen):
                 bg_surf = pygame.Surface((bg_rect.w, bg_rect.h), pygame.SRCALPHA)
                 draw_rounded_rect(bg_surf, (*TOY_COLORS["panel_bg"][:3], 240), bg_surf.get_rect(), radius=8)
                 pygame.draw.rect(bg_surf, TOY_COLORS["panel_stroke"], bg_surf.get_rect(), 2, border_radius=8)
+                draw_drop_shadow(surface, bg_rect, radius=10, offset=(0, 4), alpha=40)
                 surface.blit(bg_surf, bg_rect.topleft)
                 surface.blit(txt_surf, (bg_rect.x + 10, bg_rect.y + 6))
 
@@ -1099,9 +1396,11 @@ class GameScreen(BaseScreen):
         return surf
 
     def _rebuild_bg_cache(self):
-        self.bg_cache = pygame.Surface((self.manager.WIN_W, self.manager.WIN_H))
-        self.bg_cache.fill(BG_CREAM)
+        self.bg_cache = build_board_background(self.manager.WIN_W,
+                                               self.manager.WIN_H)
         tile_blit_grid(self.bg_cache, self._grid_tile_surf)
+        # 区域淡色填充（在道路之下）
+        draw_area_tints(self.bg_cache, self.game.board, self.camera)
         self._draw_roads(self.bg_cache)
         self._draw_area_bounds(self.bg_cache)
         self._draw_terrain_base(self.bg_cache)
@@ -1156,6 +1455,21 @@ class GameScreen(BaseScreen):
             border_color = get_border_color(nd.terrain_key)
             border_w = max(2, int(4 * t.scale))
             pygame.draw.rect(surface, border_color, tile_rect, border_w, border_radius=TILE_ROUND_RADIUS)
+            # HQ 双边框 + 旗帜
+            if nd.is_hq:
+                outer_rect = tile_rect.inflate(8, 8)
+                pygame.draw.rect(surface, border_color, outer_rect, 2, border_radius=TILE_ROUND_RADIUS)
+                # 旗杆 + 三角旗
+                flag_h = max(6, int(14 * t.scale))
+                pole_x = x + half - 2
+                pole_top = y - half - flag_h
+                pygame.draw.line(surface, (100, 100, 100),
+                                 (pole_x, y - half), (pole_x, pole_top), 2)
+                flag_pts = [(pole_x, pole_top),
+                            (pole_x + max(4, int(10 * t.scale)), pole_top + flag_h // 2),
+                            (pole_x, pole_top + flag_h // 2)]
+                hq_flag_color = PLAYER_COLORS.get(nd.hq_owner, border_color)
+                pygame.draw.polygon(surface, hq_flag_color, flag_pts)
             hl_rect = highlight_surf.get_rect(center=(x, y))
             surface.blit(highlight_surf, hl_rect)
 
@@ -1172,6 +1486,33 @@ class GameScreen(BaseScreen):
             ter_size = max(4, int(inner_half * 1.4))
             ter_surf = get_cached_terrain(nd.terrain_key, target_size=ter_size)
             surface.blit(ter_surf, (x - ter_surf.get_width() // 2, y - ter_surf.get_height() // 2))
+
+    def _draw_terrain_status(self, surface):
+        """地形状态覆盖：泥沼禁止符号 + 金属X站标记。"""
+        board = self.game.board
+        t = self.camera
+        nr = t.scaled_radius(NODE_RENDER_RADIUS)
+        nr_hq = nr + max(1, int(4 * t.scale))
+        for nid, nd in board.nodes.items():
+            sx, sy = t.world_to_screen(nd.x, nd.y)
+            x, y = int(sx), int(sy)
+            half = nr_hq if nd.is_hq else nr
+            # 泥沼禁止符号
+            if nd.terrain_key == "mud":
+                ban_r = max(4, int(half * 0.35))
+                pygame.draw.circle(surface, (220, 50, 50), (x, y), ban_r, max(2, int(3 * t.scale)))
+                lw = max(1, int(2 * t.scale))
+                pygame.draw.line(surface, (220, 50, 50),
+                                 (x - ban_r + 2, y - ban_r + 2),
+                                 (x + ban_r - 2, y + ban_r - 2), lw)
+            # 金属X站标记
+            if nd.terrain_key == "metal_station":
+                x_r = max(4, int(half * 0.3))
+                lw = max(1, int(2 * t.scale))
+                pygame.draw.line(surface, (180, 180, 180),
+                                 (x - x_r, y - x_r), (x + x_r, y + x_r), lw)
+                pygame.draw.line(surface, (180, 180, 180),
+                                 (x + x_r, y - x_r), (x - x_r, y + x_r), lw)
 
     def _draw_board(self, surface):
         if self.bg_dirty or self.bg_cache is None:
@@ -1280,6 +1621,7 @@ class GameScreen(BaseScreen):
 
         self._draw_hover_highlight(surface, nr, nr_hq)
         self._draw_terrain_icons(surface)
+        self._draw_terrain_status(surface)
         self._draw_all_stars(surface)
         self._draw_garrison(surface, nr, nr_hq)
 
@@ -1328,6 +1670,18 @@ class GameScreen(BaseScreen):
             pygame.draw.rect(surface, BORDER_WHITE, base_rect, base_w, border_radius=TILE_ROUND_RADIUS)
             tro_surf = get_cached_troop(troop.troop_key, troop.owner, target_size=int(base_half * 1.6))
             surface.blit(tro_surf, (x - tro_surf.get_width() // 2, y - tro_surf.get_height() // 2))
+            # 堆叠数量角标
+            stack_count = len(node.stack) if hasattr(node, "stack") and node.stack else 1
+            if stack_count > 1:
+                badge_r = max(8, int(10 * t.scale))
+                bx = x + base_half - badge_r // 2
+                by = y - base_half + badge_r // 2
+                pygame.draw.circle(surface, TOY_COLORS["accent_coral"], (bx, by), badge_r)
+                pygame.draw.circle(surface, (255, 255, 255), (bx, by), badge_r, 1)
+                cnt_font = get_font(max(10, int(12 * t.scale)), bold=True)
+                cnt_surf = cnt_font.render(str(stack_count), True, (255, 255, 255))
+                surface.blit(cnt_surf, (bx - cnt_surf.get_width() // 2,
+                                        by - cnt_surf.get_height() // 2))
 
     def _draw_hover_panel(self, surface):
         if self.hover_alpha < 10 or self.hover_node is None:
@@ -1403,8 +1757,8 @@ class GameScreen(BaseScreen):
             rect = pygame.Rect(int(min_x), int(min_y), int(max_x - min_x), int(max_y - min_y))
             bg_color = AREA_BOUNDS_COLORS[aid % len(AREA_BOUNDS_COLORS)]
             border_color = darken_color(bg_color, 40)
-            bg_alpha = (*bg_color, 25)
-            stroke_alpha = (*border_color, 60)
+            bg_alpha = (*bg_color, 20)
+            stroke_alpha = (*border_color, 90)
             bounds_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
             draw_rounded_rect(bounds_surf, bg_alpha, bounds_surf.get_rect(topleft=(0, 0)), radius=12, stroke_width=1, stroke_color=stroke_alpha)
             surface.blit(bounds_surf, rect.topleft)
